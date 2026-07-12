@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>TIDAL — prototype C</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none}
+  html,body{height:100%;overflow:hidden;background:#0B1026;font-family:system-ui,sans-serif;color:#EAF2FF}
+  #game{position:fixed;inset:0;touch-action:none}
+  #hud{position:fixed;top:14px;left:0;right:0;text-align:center;pointer-events:none}
+  .pill{display:inline-block;background:rgba(11,16,38,.55);border:1px solid rgba(142,155,255,.25);border-radius:999px;padding:6px 16px;font-size:14px;font-weight:700;margin:0 4px}
+  #msg{position:fixed;bottom:34%;left:0;right:0;text-align:center;font-size:15px;color:#8E9BFF;pointer-events:none;transition:opacity 1s}
+  a.back{position:fixed;top:12px;left:14px;z-index:5;color:#8E9BFF;font-size:13px;text-decoration:none;background:rgba(11,16,38,.55);padding:7px 12px;border-radius:999px;border:1px solid rgba(142,155,255,.25)}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<a class="back" href="index.html">← Hub</a>
+<div id="hud"><span class="pill" style="color:#FFD166">🐚 <span id="score">0</span></span><span class="pill" style="color:#5DF2C8">best wave <span id="bestWave">0</span></span></div>
+<div id="msg">HOLD to pull the tide… release to send the wave</div>
+<script>
+"use strict";
+const cv=document.getElementById("game"),cx=cv.getContext("2d");
+let W,H,DPR;
+function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;cx.setTransform(DPR,0,0,DPR,0,0);}
+addEventListener("resize",resize);resize();
+let AC=null;function tone(f,d,v,type="sine",slide=0,when=0){try{AC=AC||new (AudioContext||webkitAudioContext)();if(AC.state==="suspended")AC.resume();const t=AC.currentTime+when,o=AC.createOscillator(),g=AC.createGain();o.type=type;o.frequency.setValueAtTime(f,t);if(slide)o.frequency.exponentialRampToValueAtTime(Math.max(20,f+slide),t+d);g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(v,t+.02);g.gain.exponentialRampToValueAtTime(.0001,t+d);o.connect(g).connect(AC.destination);o.start(t);o.stop(t+d+.05);}catch(e){}}
+function noise(d,v){try{AC=AC||new (AudioContext||webkitAudioContext)();const t=AC.currentTime,b=AC.createBuffer(1,AC.sampleRate*d,AC.sampleRate),ch=b.getChannelData(0);for(let i=0;i<ch.length;i++)ch[i]=(Math.random()*2-1)*(1-i/ch.length);const s=AC.createBufferSource(),g=AC.createGain(),f=AC.createBiquadFilter();f.type="lowpass";f.frequency.value=900;s.buffer=b;g.gain.value=v;s.connect(f).connect(g).connect(AC.destination);s.start(t);}catch(e){}}
+
+const TAU=Math.PI*2;
+let score=+localStorage.getItem("tidalShells")||0;
+let charge=0,holding=false,t=0;
+const SHORE=()=>H*.62;           // resting water line
+const GOAL=()=>H*.16;            // treasure goal line
+let waterLine,wave=null,shells=[],sparks=[];
+waterLine=SHORE();
+function spawnShell(){
+  const golden=Math.random()<.12;
+  shells.push({x:W*.12+Math.random()*W*.76,y:SHORE()-20-Math.random()*H*.18,vy:0,r:golden?9:7,golden,rot:Math.random()*TAU,scored:false});
+}
+for(let i=0;i<6;i++)spawnShell();
+function ui(){document.getElementById("score").textContent=score;document.getElementById("bestWave").textContent=localStorage.getItem("tidalBestWave")||0;}
+let msgFade=null;
+function msg(s){const el=document.getElementById("msg");el.textContent=s;el.style.opacity=1;clearTimeout(msgFade);msgFade=setTimeout(()=>el.style.opacity=0,2000);}
+
+cv.addEventListener("pointerdown",()=>{ if(!wave){holding=true;} });
+addEventListener("pointerup",()=>{
+  if(!holding)return;holding=false;
+  const inSweet=charge>.68&&charge<.85;
+  const power=charge*(inSweet?1.35:1);
+  wave={y:H+40,power,speed:H*(.9+power*.9),passed:false};
+  if(inSweet)msg("PERFECT WAVE!");
+  noise(.7,.18);tone(90,.8,.15,"sine",60);
+  charge=0;
+});
+let last=performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt=(now-last)/1000;last=now;if(dt>.1)dt=.016;t+=dt;
+  if(holding){charge=Math.min(1,charge+dt*.75);waterLine=SHORE()+charge*H*.22;}
+  else if(!wave)waterLine+=(SHORE()-waterLine)*Math.min(1,dt*3);
+  // wave motion
+  if(wave){
+    wave.y-=wave.speed*dt;wave.speed*=(1-.55*dt);
+    const reach=wave.y;
+    let waveTop=Math.max(reach,GOAL()-30);
+    // push shells
+    for(const s of shells){
+      if(!s.scored&&s.y>reach&&s.y<reach+90){
+        s.vy=-(120+wave.power*260)*(s.golden?.85:1);
+      }
+    }
+    if(wave.speed<40){ // wave dies
+      const reached=Math.round(((SHORE()-wave.y)/(SHORE()-GOAL()))*100);
+      const bw=+localStorage.getItem("tidalBestWave")||0;
+      if(reached>bw){localStorage.setItem("tidalBestWave",Math.max(0,reached));ui();}
+      wave=null;
+    }
+  }
+  // shells physics
+  for(let i=shells.length-1;i>=0;i--){
+    const s=shells[i];
+    s.y+=s.vy*dt;s.vy*=(1-2.2*dt);if(Math.abs(s.vy)<4)s.vy=0;
+    if(!s.scored&&s.y<GOAL()){
+      s.scored=true;
+      const pts=s.golden?5:1;score+=pts;localStorage.setItem("tidalShells",score);
+      for(let k=0;k<10;k++)sparks.push({x:s.x,y:s.y,vx:(Math.random()-.5)*160,vy:-Math.random()*120,t:0});
+      tone(s.golden?1046:784,.3,.13);tone(s.golden?1318:988,.3,.08,"sine",0,.08);
+      msg(s.golden?"GOLDEN SHELL +5!":"+1 shell");ui();
+      shells.splice(i,1);spawnShell();
+    }
+    if(s.y>SHORE()-6)s.y=SHORE()-6;
+  }
+  for(let i=sparks.length-1;i>=0;i--){const p=sparks[i];p.t+=dt;if(p.t>.7){sparks.splice(i,1);continue;}p.vy+=300*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;}
+  render();
+}
+function render(){
+  const g=cx.createLinearGradient(0,0,0,H);g.addColorStop(0,"#0B1026");g.addColorStop(.5,"#1B2350");g.addColorStop(1,"#12325a");cx.fillStyle=g;cx.fillRect(0,0,W,H);
+  // beach
+  cx.fillStyle="#2a2f55";cx.fillRect(0,GOAL()-H,W,H);   // sky part above goal drawn over next
+  const bg=cx.createLinearGradient(0,GOAL(),0,SHORE());bg.addColorStop(0,"#4a3f6b");bg.addColorStop(1,"#5d5280");
+  cx.fillStyle=bg;cx.fillRect(0,0,W,SHORE());
+  // goal line
+  cx.setLineDash([8,8]);cx.strokeStyle="#FFD166";cx.lineWidth=2;cx.beginPath();cx.moveTo(0,GOAL());cx.lineTo(W,GOAL());cx.stroke();cx.setLineDash([]);
+  cx.fillStyle="#FFD166";cx.font="700 12px system-ui";cx.textAlign="center";cx.fillText("— treasure line —",W/2,GOAL()-8);
+  // shells
+  for(const s of shells){
+    cx.save();cx.translate(s.x,s.y);cx.rotate(Math.sin(t+s.rot)*.15);
+    cx.fillStyle=s.golden?"#FFD166":"#EAF2FF";cx.shadowColor=s.golden?"#FFD166":"#8E9BFF";cx.shadowBlur=s.golden?14:6;
+    cx.beginPath();cx.arc(0,0,s.r,Math.PI,0);cx.closePath();cx.fill();
+    cx.shadowBlur=0;cx.restore();
+  }
+  // water body
+  const wl=wave?Math.min(waterLine,wave.y+70):waterLine;
+  const wg=cx.createLinearGradient(0,wl,0,H);wg.addColorStop(0,"rgba(93,210,242,.85)");wg.addColorStop(1,"rgba(27,60,120,.95)");
+  cx.fillStyle=wg;
+  cx.beginPath();cx.moveTo(0,wl);
+  for(let x=0;x<=W;x+=14)cx.lineTo(x,wl+Math.sin(x*.04+t*3)*5);
+  cx.lineTo(W,H);cx.lineTo(0,H);cx.closePath();cx.fill();
+  // wave front
+  if(wave){
+    cx.strokeStyle="rgba(180,240,255,.9)";cx.lineWidth=5;cx.shadowColor="#5DF2C8";cx.shadowBlur=12;
+    cx.beginPath();
+    for(let x=0;x<=W;x+=12)x===0?cx.moveTo(x,wave.y+Math.sin(x*.05+t*8)*6):cx.lineTo(x,wave.y+Math.sin(x*.05+t*8)*6);
+    cx.stroke();cx.shadowBlur=0;
+  }
+  // charge bar
+  if(holding){
+    const bw=W*.5,bx=W*.25,by=H*.86;
+    cx.fillStyle="rgba(11,16,38,.7)";cx.fillRect(bx-4,by-4,bw+8,22);
+    cx.fillStyle="rgba(93,242,200,.25)";cx.fillRect(bx+bw*.68,by,bw*.17,14); // sweet spot
+    cx.fillStyle=charge>.68&&charge<.85?"#5DF2C8":"#8E9BFF";cx.fillRect(bx,by,bw*charge,14);
+  }
+  for(const p of sparks){cx.globalAlpha=1-p.t/.7;cx.fillStyle="#FFD166";cx.fillRect(p.x-2,p.y-2,4,4);}
+  cx.globalAlpha=1;
+}
+requestAnimationFrame(frame);ui();
+</script>
+</body>
+</html>

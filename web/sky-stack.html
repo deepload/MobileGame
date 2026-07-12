@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>SKY STACK — prototype V0</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none}
+  html,body{height:100%;overflow:hidden;background:#0B1026;font-family:system-ui,sans-serif;color:#EAF2FF}
+  #game{position:fixed;inset:0;touch-action:none}
+  #score{position:fixed;top:60px;left:0;right:0;text-align:center;font-size:46px;font-weight:800;pointer-events:none;text-shadow:0 0 16px rgba(93,242,200,.3)}
+  #best{position:fixed;top:112px;left:0;right:0;text-align:center;font-size:13px;color:#8E9BFF;pointer-events:none}
+  #msg{position:fixed;bottom:16%;left:0;right:0;text-align:center;font-size:17px;font-weight:700;color:#5DF2C8;pointer-events:none}
+  a.back{position:fixed;top:12px;left:14px;z-index:5;color:#8E9BFF;font-size:13px;text-decoration:none;background:rgba(11,16,38,.55);padding:7px 12px;border-radius:999px;border:1px solid rgba(142,155,255,.25)}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<a class="back" href="index.html">← Hub</a>
+<div id="score">0</div>
+<div id="best"></div>
+<div id="msg">TAP to drop the block</div>
+<script>
+"use strict";
+const cv=document.getElementById("game"),cx=cv.getContext("2d");
+let W,H,DPR;
+function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;cx.setTransform(DPR,0,0,DPR,0,0);}
+addEventListener("resize",resize);resize();
+let AC=null;function tone(f,d,v,slide=0){try{AC=AC||new (AudioContext||webkitAudioContext)();if(AC.state==="suspended")AC.resume();const t=AC.currentTime,o=AC.createOscillator(),g=AC.createGain();o.type="sine";o.frequency.setValueAtTime(f,t);if(slide)o.frequency.exponentialRampToValueAtTime(Math.max(30,f+slide),t+d);g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(v,t+.01);g.gain.exponentialRampToValueAtTime(.0001,t+d);o.connect(g).connect(AC.destination);o.start(t);o.stop(t+d+.05);}catch(e){}}
+const BH=34,W0=Math.min(260,()=>{});const BASE_W=Math.min(260,innerWidth*.62);
+let stack,cur,debris,score,over,camY,t=0,best=+localStorage.getItem("skyStackBest")||0,perfectStreak=0;
+const hue=i=>`hsl(${(190+i*7)%360} 70% ${58+((i%2)*6)}%)`;
+function reset(){stack=[{x:W/2,w:BASE_W,y:0}];debris=[];score=0;over=false;camY=0;perfectStreak=0;spawn();msg("TAP to drop the block");ui();}
+function spawn(){cur={w:stack[stack.length-1].w,y:(stack.length)*BH,t:Math.random()*6,speed:1.4+Math.min(score*0.045,2.2),dir:1};}
+function msg(s){document.getElementById("msg").textContent=s;}
+function ui(){document.getElementById("score").textContent=score;document.getElementById("best").textContent="best "+best;}
+function drop(){
+  const top=stack[stack.length-1];
+  const x=curX();
+  const dx=x-top.x;
+  if(Math.abs(dx)<7){ // perfect
+    perfectStreak++;
+    const w=Math.min(cur.w+(perfectStreak>=3?6:0),BASE_W);
+    stack.push({x:top.x,w,y:cur.y});
+    tone(440*Math.pow(1.06,Math.min(score,24)),.25,.15);tone(880,.15,.06);
+    msg(perfectStreak>=3?"PERFECT ×"+perfectStreak+" — growing!":"PERFECT!");
+  }else{
+    perfectStreak=0;
+    const overlap=cur.w-Math.abs(dx);
+    if(overlap<=8){ // total miss
+      debris.push({x,y:cur.y,w:cur.w,vx:dx>0?80:-80,vy:-60,rot:0,vr:dx>0?2:-2});
+      gameOver();return;
+    }
+    const nx=(Math.max(x-cur.w/2,top.x-top.w/2)+Math.min(x+cur.w/2,top.x+top.w/2))/2;
+    // debris = sliced part
+    const sw=cur.w-overlap;
+    const sx=dx>0?nx+overlap/2+sw/2:nx-overlap/2-sw/2;
+    debris.push({x:sx,y:cur.y,w:sw,vx:dx>0?120:-120,vy:-40,rot:0,vr:dx>0?3:-3});
+    stack.push({x:nx,w:overlap,y:cur.y});
+    tone(300,.12,.1);
+    msg("");
+  }
+  score++;ui();spawn();
+}
+function gameOver(){
+  over=true;tone(220,.6,.12,-160);
+  if(score>best){best=score;localStorage.setItem("skyStackBest",best);}
+  msg("Height "+score+" — TAP to retry");ui();
+}
+function curX(){const range=W*.5-cur.w*.15;return W/2+Math.sin(cur.t*cur.speed)*range;}
+cv.addEventListener("pointerdown",()=>{ if(over){reset();return;} drop(); });
+let last=performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt=(now-last)/1000;last=now;if(dt>.1)dt=.016;t+=dt;
+  if(!over)cur.t+=dt;
+  const targetCam=Math.max(0,(stack.length)*BH-H*.45);
+  camY+=(targetCam-camY)*Math.min(1,dt*5);
+  for(let i=debris.length-1;i>=0;i--){const d=debris[i];d.vy+=600*dt;d.x+=d.vx*dt;d.y+=d.vy*dt*-1;d.rot+=d.vr*dt;if(d.y<camY-200)debris.splice(i,1);}
+  // render
+  const g=cx.createLinearGradient(0,0,0,H);g.addColorStop(0,"#0B1026");g.addColorStop(1,"#1B2350");cx.fillStyle=g;cx.fillRect(0,0,W,H);
+  cx.save();cx.translate(0,H-80+camY);
+  for(let i=0;i<stack.length;i++){const b=stack[i];cx.fillStyle=hue(i);cx.shadowColor=hue(i);cx.shadowBlur=8;cx.fillRect(b.x-b.w/2,-(b.y+BH),b.w,BH-3);cx.shadowBlur=0;}
+  if(!over){const x=curX();cx.fillStyle=hue(stack.length);cx.shadowColor="#5DF2C8";cx.shadowBlur=14;cx.fillRect(x-cur.w/2,-(cur.y+BH),cur.w,BH-3);cx.shadowBlur=0;}
+  for(const d of debris){cx.save();cx.translate(d.x,-(d.y+BH/2));cx.rotate(d.rot);cx.globalAlpha=.7;cx.fillStyle="#E36588";cx.fillRect(-d.w/2,-BH/2,d.w,BH-3);cx.restore();cx.globalAlpha=1;}
+  cx.restore();
+}
+requestAnimationFrame(frame);reset();
+</script>
+</body>
+</html>

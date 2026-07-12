@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0B1026">
+<title>ECHO ORBIT — prototype</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
+  html,body { height:100%; overflow:hidden; background:#0B1026; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:#EAF2FF; }
+  #game { position:fixed; inset:0; touch-action:none; }
+  .hud { position:fixed; top:env(safe-area-inset-top,0); left:0; right:0; padding:12px 16px; display:flex; justify-content:space-between; pointer-events:none; z-index:5; }
+  .pill { background:rgba(11,16,38,.55); border:1px solid rgba(142,155,255,.25); border-radius:999px; padding:6px 14px; font-size:14px; font-weight:600; backdrop-filter:blur(4px); }
+  .gold { color:#FFD166; } .mint { color:#5DF2C8; } .violet { color:#B388FF; }
+  #heightHud { position:fixed; top:64px; left:0; right:0; text-align:center; font-size:44px; font-weight:800; color:#EAF2FF; text-shadow:0 0 18px rgba(93,242,200,.35); pointer-events:none; z-index:5; display:none; }
+  #comboHud { position:fixed; top:118px; left:0; right:0; text-align:center; font-size:16px; font-weight:700; color:#FF7E6B; pointer-events:none; z-index:5; display:none; }
+  .overlay { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; padding:0 20px calc(28px + env(safe-area-inset-bottom,0)); z-index:10; pointer-events:none; }
+  .overlay > * { pointer-events:auto; }
+  .panel { background:rgba(11,16,38,.92); border:1px solid rgba(142,155,255,.3); border-radius:20px; padding:20px; width:100%; max-width:420px; box-shadow:0 10px 40px rgba(0,0,0,.5); }
+  .btn { display:block; width:100%; border:none; border-radius:16px; padding:15px; font-size:17px; font-weight:800; cursor:pointer; margin-top:10px; font-family:inherit; }
+  .btn:active { transform:scale(.97); }
+  .btn-primary { background:linear-gradient(135deg,#5DF2C8,#3CC9A8); color:#06281f; }
+  .btn-ghost { background:rgba(142,155,255,.14); color:#EAF2FF; border:1px solid rgba(142,155,255,.35); }
+  .btn-ad { background:linear-gradient(135deg,#FFD166,#f0a93c); color:#3a2a00; }
+  .btn-violet { background:linear-gradient(135deg,#B388FF,#8a5cf5); color:#fff; }
+  .btn:disabled { opacity:.4; }
+  h1 { font-size:34px; letter-spacing:4px; font-weight:900; text-align:center;
+       background:linear-gradient(90deg,#5DF2C8,#8E9BFF,#B388FF); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub { text-align:center; color:#8E9BFF; font-size:13px; margin-top:4px; }
+  .row { display:flex; gap:8px; }
+  .row .btn { margin-top:10px; }
+  .stat { display:flex; justify-content:space-between; font-size:14px; padding:5px 0; color:#c7d2ff; }
+  .stat b { color:#EAF2FF; }
+  #homeUI, #resultsUI, #upgradesUI, #dailyUI, #prestigeUI, #adUI { display:none; }
+  .upg { display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid rgba(142,155,255,.12); }
+  .upg .info { flex:1; } .upg .name { font-weight:700; font-size:14px; } .upg .desc { font-size:11.5px; color:#8E9BFF; }
+  .upg button { border:none; border-radius:10px; padding:9px 12px; font-weight:800; font-size:12.5px; cursor:pointer; background:#FFD166; color:#3a2a00; min-width:86px; font-family:inherit; }
+  .upg button:disabled { background:rgba(142,155,255,.15); color:#6b76b8; }
+  .daily { padding:9px 0; border-bottom:1px solid rgba(142,155,255,.12); font-size:13.5px; }
+  .bar { height:6px; background:rgba(142,155,255,.15); border-radius:3px; margin-top:6px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:linear-gradient(90deg,#5DF2C8,#FFD166); border-radius:3px; }
+  .close { position:absolute; top:10px; right:14px; background:none; border:none; color:#8E9BFF; font-size:22px; cursor:pointer; }
+  .panel { position:relative; }
+  .toast { position:fixed; top:22%; left:0; right:0; text-align:center; font-weight:800; font-size:18px; color:#FFD166; text-shadow:0 2px 12px rgba(0,0,0,.6); pointer-events:none; z-index:20; opacity:0; transition:opacity .3s, transform .6s; }
+  #muteBtn { position:fixed; top:calc(10px + env(safe-area-inset-top,0)); right:14px; z-index:15; background:rgba(11,16,38,.55); border:1px solid rgba(142,155,255,.25); color:#EAF2FF; border-radius:999px; width:38px; height:38px; font-size:17px; cursor:pointer; display:none; }
+  .tag { display:inline-block; background:rgba(93,242,200,.12); color:#5DF2C8; font-size:11px; font-weight:700; border-radius:6px; padding:2px 7px; margin-left:6px; }
+  a.back { position:fixed; top:calc(12px + env(safe-area-inset-top,0)); left:14px; z-index:15; color:#8E9BFF; font-size:13px; text-decoration:none; background:rgba(11,16,38,.55); padding:7px 12px; border-radius:999px; border:1px solid rgba(142,155,255,.25); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<a class="back" href="index.html">← Hub</a>
+<button id="muteBtn">♪</button>
+
+<div class="hud" id="topHud" style="display:none">
+  <span class="pill gold" id="dustHud">✦ 0</span>
+  <span class="pill mint" id="multHud">×1.0</span>
+</div>
+<div id="heightHud">0</div>
+<div id="comboHud"></div>
+<div class="toast" id="toast"></div>
+
+<div class="overlay" id="homeUI">
+  <div class="panel">
+    <h1>ECHO ORBIT</h1>
+    <div class="sub">Tap to leap orbit to orbit. Your best runs fly with you.</div>
+    <div class="stat" style="margin-top:10px"><span>Best height</span><b id="hBest">0</b></div>
+    <div class="stat"><span>Stardust</span><b class="gold" id="hDust">✦ 0</b></div>
+    <div class="stat"><span>Photons (permanent ×<span id="hMultV">1.0</span>)</span><b class="violet" id="hPhotons">◉ 0</b></div>
+    <div class="stat"><span>Echoes equipped</span><b class="mint" id="hEchoes">0</b></div>
+    <button class="btn btn-primary" id="playBtn">▶ &nbsp;PLAY &nbsp;<span style="font-weight:500;font-size:13px">(or tap the sky)</span></button>
+    <div class="row">
+      <button class="btn btn-ghost" id="upgOpenBtn">Upgrades</button>
+      <button class="btn btn-ghost" id="dailyOpenBtn">Daily <span id="dailyDot" style="color:#FFD166">●</span></button>
+    </div>
+    <button class="btn btn-violet" id="prestigeOpenBtn" style="display:none">☀ SUPERNOVA available</button>
+    <div id="lbBox" style="display:none">
+      <div style="font-weight:800;font-size:13px;margin-top:12px;color:#8E9BFF">WEEKLY LEADERBOARD <span style="font-weight:500">(live server)</span></div>
+      <div id="lbList" style="font-size:13px;margin-top:4px"></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="resultsUI">
+  <div class="panel">
+    <div style="text-align:center;font-size:13px;color:#8E9BFF">RUN COMPLETE</div>
+    <div style="text-align:center;font-size:42px;font-weight:900" id="rHeight">0</div>
+    <div style="text-align:center;font-size:13px;color:#5DF2C8;font-weight:700" id="rRecord"></div>
+    <div class="stat" style="margin-top:8px"><span>You collected</span><b class="gold" id="rDust">✦ 0</b></div>
+    <div class="stat"><span>Echo income</span><b class="mint" id="rEcho">✦ 0</b></div>
+    <div class="stat"><span>Perfect arcs</span><b id="rPerfects">0</b></div>
+    <button class="btn btn-primary" id="retryBtn">▶ &nbsp;ONE MORE RUN</button>
+    <div class="row">
+      <button class="btn btn-ad" id="doubleBtn">▶ Ad: ×2 dust</button>
+      <button class="btn btn-ghost" id="homeBtn">Home</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="upgradesUI">
+  <div class="panel">
+    <button class="close" id="upgClose">✕</button>
+    <div style="font-weight:800;font-size:17px">Upgrades <span class="pill gold" id="uDust" style="font-size:12px">✦ 0</span></div>
+    <div id="upgList" style="margin-top:6px"></div>
+  </div>
+</div>
+
+<div class="overlay" id="dailyUI">
+  <div class="panel">
+    <button class="close" id="dailyClose">✕</button>
+    <div style="font-weight:800;font-size:17px">Daily challenges</div>
+    <div class="sub" style="text-align:left">Reset at midnight · rewards claimed automatically</div>
+    <div id="dailyList"></div>
+  </div>
+</div>
+
+<div class="overlay" id="prestigeUI">
+  <div class="panel">
+    <button class="close" id="prestigeClose">✕</button>
+    <div style="font-weight:800;font-size:19px;text-align:center">☀ SUPERNOVA</div>
+    <div class="sub">Collapse your star. Begin again, brighter.</div>
+    <div class="stat" style="margin-top:8px"><span>You will earn</span><b class="violet" id="pGain">◉ 0 photons</b></div>
+    <div class="stat"><span>New permanent multiplier</span><b class="mint" id="pMult">×1.0</b></div>
+    <div class="stat" style="color:#E36588"><span>Resets</span><b style="color:#E36588">upgrades · stardust · echoes</b></div>
+    <div class="stat"><span>Keeps</span><b>photons · records · dailies</b></div>
+    <button class="btn btn-violet" id="prestigeBtn">GO SUPERNOVA</button>
+  </div>
+</div>
+
+<div class="overlay" id="adUI" style="justify-content:center">
+  <div class="panel" style="text-align:center">
+    <div style="font-size:15px;font-weight:700">Rewarded ad (simulated)</div>
+    <div style="font-size:44px;margin:14px 0" id="adCount">3</div>
+    <div class="sub">In production: a real opt-in rewarded ad.<br>If the ad fails to load, the reward is granted anyway.</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============ ECHO ORBIT — playable prototype ============ */
+
+/* ---------- utils ---------- */
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,t)=>a+(b-a)*t;
+const TAU=Math.PI*2;
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+const dayKey=()=>{const d=new Date();return d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate();};
+
+/* ---------- save ---------- */
+const SAVE_KEY="echoOrbitSave_v1";
+const defaultSave=()=>({
+  dust:0, photons:0, prestige:0, bestHeight:0, bestHeightThisPrestige:0, totalRuns:0,
+  upgrades:{guide:0,magnet:0,save:0,slots:0,yield:0,keeper:0,precision:0},
+  echoes:[], // {dust, height, path:[x,y,...], seedTag}
+  daily:{key:0, prog:[0,0,0], claimed:[false,false,false]},
+  muted:false, doubleUsedRun:false
+});
+let S; try{ S=Object.assign(defaultSave(), JSON.parse(localStorage.getItem(SAVE_KEY)||"{}")); }catch(e){ S=defaultSave(); }
+S.upgrades=Object.assign(defaultSave().upgrades,S.upgrades||{});
+const save=()=>{ try{ localStorage.setItem(SAVE_KEY,JSON.stringify(S)); }catch(e){} };
+
+/* ---------- optional backend (Rust server in /server) — offline-first ---------- */
+const NET={
+  base:location.protocol==="file:"?"http://localhost:8080":"http://"+location.hostname+":8080",
+  token:localStorage.getItem("echoOrbitToken")||"",
+  async req(method,path,body){
+    const r=await fetch(NET.base+path,{method,headers:{"Content-Type":"application/json",...(NET.token?{Authorization:"Bearer "+NET.token}:{})},body:body?JSON.stringify(body):undefined});
+    if(r.status===401){NET.token="";localStorage.removeItem("echoOrbitToken");throw 0;}
+    if(!r.ok)throw 0; return r.json();
+  },
+  async auth(){ if(NET.token)return; const j=await NET.req("POST","/api/auth/anonymous"); NET.token=j.token; localStorage.setItem("echoOrbitToken",j.token); },
+  async submit(height,perfects,prestige){
+    try{ await NET.auth(); await NET.req("POST","/api/leaderboard/submit",{height,perfects,prestige});
+         await NET.req("PUT","/api/save",{dust:S.dust,photons:S.photons,prestige:S.prestige,bestHeight:S.bestHeight,bestThisPrestige:S.bestHeightThisPrestige,totalRuns:S.totalRuns});
+    }catch(e){/* offline: fine, the device is the source of truth */}
+  },
+  async renderLb(){
+    const box=document.getElementById("lbBox"),list=document.getElementById("lbList");
+    try{
+      const j=await NET.req("GET","/api/leaderboard/top");
+      if(!j.entries||!j.entries.length){box.style.display="none";return;}
+      list.innerHTML=j.entries.slice(0,5).map((e,i)=>
+        `<div class="stat"><span>${i+1}. ${e.name}</span><b class="mint">▲ ${e.height}</b></div>`).join("");
+      box.style.display="block";
+    }catch(e){ box.style.display="none"; }
+  }
+};
+
+/* ---------- upgrades config ---------- */
+const UPG={
+  guide:    {name:"Aim Guide",       desc:"Longer launch preview line",        base:30,  max:6, eff:l=>40+l*38},
+  magnet:   {name:"Dust Magnet",     desc:"Pull stardust from farther away",   base:40,  max:6, eff:l=>34+l*16},
+  save:     {name:"Save Ring",       desc:"Extra rescue per run",              base:150, max:2, eff:l=>1+l},
+  slots:    {name:"Echo Slots",      desc:"More ghost runs earn beside you",   base:120, max:2, eff:l=>1+l},
+  yield:    {name:"Echo Yield",      desc:"Echoes earn a bigger share",        base:80,  max:6, eff:l=>0.10+l*0.05},
+  keeper:   {name:"Combo Keeper",    desc:"Chance to keep combo when rescued", base:100, max:5, eff:l=>l*0.15},
+  precision:{name:"Star Sense",      desc:"Slightly wider capture window",     base:90,  max:5, eff:l=>1+l*0.06},
+};
+const upgCost=(id)=>Math.round(UPG[id].base*Math.pow(1.6,S.upgrades[id]));
+const eff=(id)=>UPG[id].eff(S.upgrades[id]);
+const globalMult=()=>1+S.photons*0.10;
+
+/* ---------- audio ---------- */
+let AC=null, lastTick=0;
+function ac(){ if(!AC){ try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){} } if(AC&&AC.state==="suspended")AC.resume(); return AC; }
+function tone(freq,dur,type,vol,when=0,slide=0){
+  if(S.muted)return; const a=ac(); if(!a)return;
+  const t=a.currentTime+when, o=a.createOscillator(), g=a.createGain();
+  o.type=type; o.frequency.setValueAtTime(freq,t);
+  if(slide)o.frequency.exponentialRampToValueAtTime(Math.max(30,freq+slide),t+dur);
+  g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(vol,t+0.012); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.connect(g).connect(a.destination); o.start(t); o.stop(t+dur+0.05);
+}
+const PENTA=[261.6,293.7,329.6,392.0,440.0,523.3,587.3,659.3,784.0,880.0];
+const sCapture=c=>{const n=PENTA[Math.min(c,PENTA.length-1)];tone(n,0.22,"sine",0.16);tone(n*2,0.12,"sine",0.05);};
+const sPerfect=()=>{tone(1046,0.3,"sine",0.12);tone(1318,0.35,"sine",0.09,0.06);tone(1568,0.4,"sine",0.07,0.12);};
+const sDust=()=>{const t=performance.now(); if(t-lastTick<50)return; lastTick=t; tone(1500+Math.random()*400,0.06,"triangle",0.045);};
+const sSave=()=>{tone(200,0.35,"sine",0.12,0,400);tone(660,0.18,"sine",0.08,0.28);};
+const sFall=()=>tone(300,0.5,"sine",0.1,0,-200);
+const sNova=()=>{tone(110,1.2,"sine",0.2,0,80);tone(220,1.4,"sine",0.12,0.2);tone(55,2,"sine",0.15,0.9);};
+const sUi=()=>tone(520,0.08,"triangle",0.07);
+
+/* ---------- canvas ---------- */
+const cv=document.getElementById("game"), cx=cv.getContext("2d");
+let W=0,H=0,DPR=1;
+function resize(){ DPR=Math.min(window.devicePixelRatio||1,2); W=window.innerWidth; H=window.innerHeight; cv.width=W*DPR; cv.height=H*DPR; cx.setTransform(DPR,0,0,DPR,0,0); }
+window.addEventListener("resize",resize); resize();
+
+/* ---------- world gen (seeded per prestige => echo replays align) ---------- */
+const SPACING=175;
+let rings=[], motes=[], genRng=null, genCount=0;
+function ringSeed(){ return 987654321 + S.prestige*777; }
+function resetWorld(){ rings=[]; motes=[]; genCount=0; genRng=mulberry32(ringSeed());
+  addRing(true); while(rings.length<14) addRing(false);
+}
+function addRing(first){
+  const i=genCount++;
+  const r=first?70:lerp(62,44,clamp(i/60,0,1))+genRng()*10;
+  const x=first?W*0.5:W*(0.28+genRng()*0.44);
+  const y=-i*SPACING + (first?0:(genRng()*30-15));
+  const speedUp=1+Math.min(i*0.012,0.55);
+  const ring={i,x,baseX:x,y,r,
+    omega:(1.35+genRng()*0.5)*speedUp*(genRng()<0.5?1:-1),
+    move:(i>7&&genRng()<0.30)?(26+genRng()*34):0, movePhase:genRng()*TAU, moveSpeed:0.6+genRng()*0.5,
+    storm:(i>9&&i%7===3&&genRng()<0.8)};
+  rings.push(ring);
+  if(!first){ // dust motes in the gap below this ring
+    const prev=rings[rings.length-2];
+    const n=ring.storm?13:7;
+    for(let k=0;k<n;k++){
+      const t=(k+1)/(n+1);
+      const mx=ring.storm? ring.x+Math.cos(genRng()*TAU)*(ring.r+26+genRng()*20)
+                         : lerp(prev.x,ring.x,t)+(genRng()*90-45);
+      const my=ring.storm? ring.y+Math.sin(genRng()*TAU)*(ring.r+26+genRng()*20)
+                         : lerp(prev.y,ring.y,t)+(genRng()*40-20);
+      motes.push({x:mx,y:my,v:ring.storm?3:1+(genRng()<0.25?1:0),got:false,pull:0,px:mx,py:my});
+    }
+  }
+}
+
+/* ---------- game state ---------- */
+const ST={HOME:0,RUN:1,OVER:2};
+let state=ST.HOME;
+let star, cam, run, particles=[], floats=[], echoGhosts=[], bgStars=[];
+function makeBgStars(){ bgStars=[]; for(let i=0;i<70;i++)bgStars.push({x:Math.random(),y:Math.random(),z:0.2+Math.random()*0.8,tw:Math.random()*TAU}); }
+makeBgStars();
+
+function tierColor(){ const tiers=["#5DF2C8","#7DD8FF","#FFD166","#FF9E6B","#FF7E9B","#B388FF","#FFFFFF"]; return tiers[Math.min(S.prestige,tiers.length-1)]; }
+
+function resetHome(){
+  state=ST.HOME; resetWorld();
+  star={mode:"orbit",ring:0,ang:-Math.PI/2,x:0,y:0,vx:0,vy:0,trail:[]};
+  cam={y:-H*0.62};
+  syncOrbitPos(rings[0],0);
+  ui();
+}
+function syncOrbitPos(r,ang){ star.ang=ang; star.x=r.x+Math.cos(ang)*r.r; star.y=r.y+Math.sin(ang)*r.r; }
+
+function startRun(){
+  state=ST.RUN; resetWorld();
+  star={mode:"orbit",ring:0,ang:-Math.PI/2,x:0,y:0,vx:0,vy:0,trail:[]};
+  syncOrbitPos(rings[0],-Math.PI/2);
+  cam={y:-H*0.62};
+  run={height:0,dust:0,echoDust:0,echoFrac:0,perfects:0,combo:0,maxCombo:0,saves:eff("save"),
+       t:0,rec:[],recT:0,revived:false,flightMinB:1e9,flightDist:0,doubleUsed:false};
+  particles.length=0; floats.length=0;
+  // spawn echo ghosts
+  echoGhosts=S.echoes.slice(0,eff("slots")).map(e=>({path:e.path,dustVal:e.dust,t:0,done:false,x:0,y:0,credited:0}));
+  S.doubleUsedRun=false;
+  ui();
+}
+
+/* ---------- gameplay ---------- */
+function release(){
+  const r=rings[star.ring];
+  const dir=Math.sign(r.omega)||1;
+  const tx=-Math.sin(star.ang)*dir, ty=Math.cos(star.ang)*dir;
+  const sp=560;
+  star.mode="fly"; star.vx=tx*sp; star.vy=ty*sp;
+  run.flightMinB={}; run.flightDist=0;
+  tone(340,0.1,"triangle",0.06);
+}
+function capture(ring,perfect){
+  star.mode="orbit"; star.ring=ring.i;
+  const skipped=ring.i-(run.lastRing||0)>1;
+  star.ang=Math.atan2(star.y-ring.y,star.x-ring.x);
+  run.lastRing=ring.i;
+  const newH=ring.i;
+  if(newH>run.height)run.height=newH;
+  if(perfect){run.perfects++;run.combo++;}
+  else if(skipped){run.combo+=2;}
+  // dust for the climb
+  let gain=Math.round(5*(1+0.1*run.combo)*(perfect?2:1)*(skipped?2:1)*globalMult());
+  run.dust+=gain;
+  run.maxCombo=Math.max(run.maxCombo,run.combo);
+  sCapture(run.combo);
+  if(perfect){sPerfect(); addFloat(star.x,star.y-30,"PERFECT ×2","#FF7E6B",17);}
+  if(skipped)addFloat(star.x,star.y-48,"SKIP! +combo","#5DF2C8",14);
+  addFloat(star.x,star.y-12,"+"+gain+" ✦","#FFD166",13);
+  burst(star.x,star.y,perfect?"#FF7E6B":tierColor(),perfect?16:9);
+  dailyProgress(0,newH,true); // height daily uses max
+  while(rings.length<ring.i+14)addRing(false);
+}
+function fallEnds(){
+  if(run.saves>0){
+    run.saves--;
+    const r=rings[Math.max(0,star.ring)];
+    star.mode="orbit"; syncOrbitPos(r,Math.atan2(star.y-r.y,star.x-r.x));
+    sSave(); addFloat(star.x,star.y-24,"SAVED!  ("+run.saves+" left)","#5DF2C8",16);
+    burst(star.x,star.y,"#5DF2C8",14);
+    if(Math.random()>=eff("keeper")){ if(run.combo>0)addFloat(star.x,star.y+16,"combo reset","#8E9BFF",11); run.combo=0; }
+    else addFloat(star.x,star.y+16,"combo kept!","#FFD166",12);
+    return;
+  }
+  endRun();
+}
+function endRun(){
+  sFall(); state=ST.OVER;
+  S.totalRuns++;
+  const total=run.dust+Math.round(run.echoDust);
+  S.dust+=total;
+  if(run.height>S.bestHeight)S.bestHeight=run.height;
+  if(run.height>S.bestHeightThisPrestige)S.bestHeightThisPrestige=run.height;
+  dailyProgress(1,run.dust,false);
+  dailyProgress(2,run.perfects,false);
+  // record echo (top runs by dust, aligned to this prestige's seed)
+  if(run.rec.length>10){
+    S.echoes.push({dust:run.dust,height:run.height,path:run.rec,seedTag:ringSeed()});
+    S.echoes.sort((a,b)=>b.dust-a.dust);
+    S.echoes=S.echoes.slice(0,3);
+  }
+  save(); ui();
+  NET.submit(run.height,run.perfects,S.prestige); // fire-and-forget
+}
+
+/* ---------- dailies ---------- */
+const DAILIES=[
+  {label:"Reach height 15 in one run", target:15},
+  {label:"Collect 250 ✦ in one run",   target:250},
+  {label:"3 Perfect Arcs in one run",  target:3},
+];
+function checkDailyReset(){
+  if(S.daily.key!==dayKey()){ S.daily={key:dayKey(),prog:[0,0,0],claimed:[false,false,false]}; }
+}
+function dailyProgress(i,v,useMax){
+  checkDailyReset();
+  if(S.daily.claimed[i])return;
+  S.daily.prog[i]=useMax?Math.max(S.daily.prog[i],v):Math.max(S.daily.prog[i],v);
+  if(S.daily.prog[i]>=DAILIES[i].target){
+    S.daily.claimed[i]=true;
+    const reward=Math.round(100*globalMult());
+    S.dust+=reward;
+    toast("Daily complete!  +"+reward+" ✦");
+    sPerfect();
+  }
+}
+
+/* ---------- fx ---------- */
+function burst(x,y,color,n){ for(let i=0;i<n;i++){const a=Math.random()*TAU,s=60+Math.random()*160;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:0.5+Math.random()*0.3,t:0,color});} if(particles.length>220)particles.splice(0,particles.length-220); }
+function addFloat(x,y,txt,color,size){ floats.push({x,y,txt,color,size,t:0}); if(floats.length>30)floats.shift(); }
+let toastTimer=null;
+function toast(txt){ const el=document.getElementById("toast"); el.textContent=txt; el.style.opacity=1; el.style.transform="translateY(-10px)"; clearTimeout(toastTimer); toastTimer=setTimeout(()=>{el.style.opacity=0;el.style.transform="none";},1800); }
+
+/* ---------- update ---------- */
+let last=performance.now(), running=true;
+document.addEventListener("visibilitychange",()=>{ running=!document.hidden; last=performance.now(); if(document.hidden)save(); });
+
+function update(dt){
+  const t=performance.now()/1000;
+  // rings motion
+  for(const r of rings){ if(r.move)r.x=r.baseX+Math.sin(t*r.moveSpeed+r.movePhase)*r.move; }
+
+  if(star.mode==="orbit"){
+    const r=rings[star.ring];
+    star.ang+=r.omega*dt;
+    star.x=r.x+Math.cos(star.ang)*r.r; star.y=r.y+Math.sin(star.ang)*r.r;
+  }else if(star.mode==="fly"){
+    star.x+=star.vx*dt; star.y+=star.vy*dt;
+    run.flightDist+=Math.hypot(star.vx,star.vy)*dt;
+    // capture check: entering a higher ring's disk
+    for(let k=star.ring+1;k<Math.min(star.ring+5,rings.length);k++){
+      const r=rings[k];
+      const dx=star.x-r.x, dy=star.y-r.y, d=Math.hypot(dx,dy);
+      // impact parameter (perp distance of velocity line to center) for Perfect
+      const vlen=Math.hypot(star.vx,star.vy)||1;
+      const b=Math.abs((star.vx*dy-star.vy*dx)/vlen);
+      if(d<r.r*eff("precision")){
+        capture(r, b<r.r*0.34);
+        break;
+      }
+    }
+    if(star.mode==="fly"){
+      const missBelow=star.y>cam.y+H+80;
+      const missFar=run.flightDist>Math.max(H*1.5,1200);
+      const missSide=star.x<-W*0.4||star.x>W*1.4;
+      if(missBelow||missFar||missSide)fallEnds();
+    }
+  }
+  // trail
+  star.trail.push(star.x,star.y); if(star.trail.length>60)star.trail.splice(0,star.trail.length-60);
+
+  if(state===ST.RUN){
+    run.t+=dt;
+    // record path @10Hz (cap 5 min)
+    run.recT+=dt;
+    if(run.recT>=0.1&&run.rec.length<6000){run.recT=0;run.rec.push(Math.round(star.x),Math.round(star.y));}
+    // camera follows upward
+    const targetY=star.y-H*0.55;
+    if(targetY<cam.y)cam.y=lerp(cam.y,targetY,Math.min(1,dt*6));
+    // motes: magnet + collect
+    const magR=eff("magnet");
+    for(const m of motes){
+      if(m.got)continue;
+      const dx=star.x-m.x,dy=star.y-m.y,d=Math.hypot(dx,dy);
+      if(d<magR){m.pull=Math.min(1,m.pull+dt*4);m.x+=dx*m.pull*dt*9;m.y+=dy*m.pull*dt*9;}
+      if(d<20){m.got=true;const g=Math.round(m.v*globalMult());run.dust+=g;sDust();addFloat(m.x,m.y,"+"+g,"#FFD166",11);}
+    }
+    // echoes replay + income
+    const yieldPct=eff("yield");
+    for(const g of echoGhosts){
+      if(g.done)continue;
+      g.t+=dt;
+      const idx=Math.floor(g.t/0.1)*2;
+      if(idx>=g.path.length-2){g.done=true;continue;}
+      const f=(g.t%0.1)/0.1;
+      g.x=lerp(g.path[idx],g.path[idx+2],f);
+      g.y=lerp(g.path[idx+1],g.path[idx+3],f);
+      const perSec=(g.dustVal*yieldPct)/(g.path.length/2*0.1);
+      run.echoFrac+=perSec*dt*globalMult();
+      if(run.echoFrac>=25){run.echoDust+=25;run.echoFrac-=25;addFloat(g.x,g.y,"+25 ✦ echo","#5DF2C8",11);sDust();}
+    }
+  }
+  // particles & floats
+  for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.t+=dt;if(p.t>p.life){particles.splice(i,1);continue;}p.x+=p.vx*dt;p.y+=p.vy*dt;p.vx*=0.98;p.vy*=0.98;}
+  for(let i=floats.length-1;i>=0;i--){const f=floats[i];f.t+=dt;f.y-=28*dt;if(f.t>1.1)floats.splice(i,1);}
+}
+
+/* ---------- render ---------- */
+function render(){
+  const t=performance.now()/1000;
+  // background gradient shifts with altitude
+  const alt=state===ST.RUN?run.height:0;
+  const shift=clamp(alt/120,0,1);
+  const g=cx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,`rgb(${11+shift*30},${16+shift*8},${38+shift*40})`);
+  g.addColorStop(1,"#1B2350");
+  cx.fillStyle=g; cx.fillRect(0,0,W,H);
+  // parallax stars
+  for(const s of bgStars){
+    const y=((s.y*H - cam.y*s.z*0.08)%H+H)%H;
+    const a=0.25+0.35*Math.abs(Math.sin(t*1.2+s.tw));
+    cx.globalAlpha=a*s.z; cx.fillStyle="#EAF2FF";
+    cx.fillRect(s.x*W,y,s.z<0.5?1:2,s.z<0.5?1:2);
+  }
+  cx.globalAlpha=1;
+
+  cx.save(); cx.translate(0,-cam.y);
+  // motes
+  for(const m of motes){
+    if(m.got||m.y<cam.y-40||m.y>cam.y+H+40)continue;
+    const r=m.v>=3?5:m.v===2?4:3;
+    cx.fillStyle=m.v>=3?"#FFE9A8":"#FFD166"; cx.shadowColor="#FFD166"; cx.shadowBlur=8;
+    cx.beginPath(); cx.arc(m.x,m.y+Math.sin(t*2+m.px)*3,r,0,TAU); cx.fill(); cx.shadowBlur=0;
+  }
+  // rings
+  for(const r of rings){
+    if(r.y<cam.y-120||r.y>cam.y+H+120)continue;
+    cx.strokeStyle=r.storm?"rgba(255,209,102,.85)":"rgba(142,155,255,.8)";
+    cx.lineWidth=r.storm?3:2.5; cx.shadowColor=r.storm?"#FFD166":"#8E9BFF"; cx.shadowBlur=12;
+    cx.beginPath(); cx.arc(r.x,r.y,r.r,0,TAU); cx.stroke();
+    // core
+    cx.fillStyle="rgba(142,155,255,.35)";
+    cx.beginPath(); cx.arc(r.x,r.y,3,0,TAU); cx.fill();
+    cx.shadowBlur=0;
+    // height label every 10
+    if(r.i>0&&r.i%10===0){ cx.fillStyle="rgba(234,242,255,.28)"; cx.font="700 13px system-ui"; cx.textAlign="center"; cx.fillText(r.i,r.x,r.y-r.r-10); }
+  }
+  // echo ghosts
+  for(const gg of echoGhosts){
+    if(gg.done)continue;
+    cx.globalAlpha=0.35; cx.fillStyle="#5DF2C8"; cx.shadowColor="#5DF2C8"; cx.shadowBlur=10;
+    cx.beginPath(); cx.arc(gg.x,gg.y,7,0,TAU); cx.fill(); cx.shadowBlur=0; cx.globalAlpha=1;
+  }
+  // aim guide while orbiting in a run — dashed arrow showing launch direction
+  if(state===ST.RUN&&star.mode==="orbit"){
+    const r=rings[star.ring], dir=Math.sign(r.omega)||1;
+    const tx=-Math.sin(star.ang)*dir, ty=Math.cos(star.ang)*dir;
+    const len=eff("guide");
+    cx.strokeStyle="rgba(93,242,200,.55)"; cx.lineWidth=2; cx.lineCap="round";
+    cx.setLineDash([4,7]);
+    cx.beginPath(); cx.moveTo(star.x+tx*12,star.y+ty*12); cx.lineTo(star.x+tx*len,star.y+ty*len); cx.stroke();
+    cx.setLineDash([]);
+    // arrowhead
+    const ex=star.x+tx*len, ey=star.y+ty*len, px=-ty, py=tx;
+    cx.beginPath();
+    cx.moveTo(ex,ey); cx.lineTo(ex-tx*8+px*5,ey-ty*8+py*5);
+    cx.moveTo(ex,ey); cx.lineTo(ex-tx*8-px*5,ey-ty*8-py*5);
+    cx.stroke();
+  }
+  // star trail — comet tail: newest segment hugs the star, fades & thins toward the tail end
+  cx.strokeStyle=tierColor(); cx.lineCap="round";
+  const tn=star.trail.length/2;
+  for(let i=2;i<star.trail.length;i+=2){
+    const f=(i/2)/tn; // 0 = oldest (tail tip), 1 = newest (at the star)
+    cx.globalAlpha=f*f*0.6;
+    cx.lineWidth=1+f*4.5;
+    cx.beginPath();
+    cx.moveTo(star.trail[i-2],star.trail[i-1]);
+    cx.lineTo(star.trail[i],star.trail[i+1]);
+    cx.stroke();
+  }
+  cx.globalAlpha=1;
+  // star
+  cx.fillStyle=tierColor(); cx.shadowColor=tierColor(); cx.shadowBlur=16;
+  cx.beginPath(); cx.arc(star.x,star.y,9,0,TAU); cx.fill();
+  cx.fillStyle="#fff"; cx.beginPath(); cx.arc(star.x,star.y,4,0,TAU); cx.fill(); cx.shadowBlur=0;
+  // particles
+  for(const p of particles){ cx.globalAlpha=1-p.t/p.life; cx.fillStyle=p.color; cx.fillRect(p.x-2,p.y-2,4,4); }
+  cx.globalAlpha=1;
+  // float texts
+  for(const f of floats){ cx.globalAlpha=1-f.t/1.1; cx.fillStyle=f.color; cx.font="800 "+f.size+"px system-ui"; cx.textAlign="center"; cx.fillText(f.txt,f.x,f.y); }
+  cx.globalAlpha=1;
+  cx.restore();
+}
+
+/* ---------- loop ---------- */
+function frame(now){
+  requestAnimationFrame(frame);
+  if(!running)return;
+  let dt=(now-last)/1000; last=now;
+  if(dt>0.1)dt=0.016;
+  update(dt); render();
+  if(state===ST.RUN){
+    document.getElementById("heightHud").textContent=run.height;
+    document.getElementById("dustHud").textContent="✦ "+(run.dust+Math.round(run.echoDust));
+    document.getElementById("comboHud").textContent=run.combo>1?"COMBO ×"+run.combo:"";
+  }
+}
+requestAnimationFrame(frame);
+
+/* ---------- input ---------- */
+cv.addEventListener("pointerdown",e=>{
+  ac();
+  if(state===ST.HOME){ hideAll(); startRun(); return; }
+  if(state===ST.RUN&&star.mode==="orbit")release();
+});
+
+/* ---------- UI ---------- */
+const $=id=>document.getElementById(id);
+function hideAll(){ for(const id of["homeUI","resultsUI","upgradesUI","dailyUI","prestigeUI"])$(id).style.display="none";
+  $("topHud").style.display=state===ST.RUN?"flex":"none";
+  $("heightHud").style.display=state===ST.RUN?"block":"none";
+  $("comboHud").style.display=state===ST.RUN?"block":"none";
+}
+function ui(){
+  checkDailyReset();
+  hideAll();
+  $("muteBtn").style.display="block";
+  $("muteBtn").textContent=S.muted?"✕":"♪";
+  if(state===ST.HOME){
+    $("homeUI").style.display="flex";
+    $("hBest").textContent=S.bestHeight;
+    $("hDust").textContent="✦ "+S.dust;
+    $("hPhotons").textContent="◉ "+S.photons;
+    $("hMultV").textContent=globalMult().toFixed(1);
+    $("hEchoes").textContent=Math.min(S.echoes.length,eff("slots"))+" / "+eff("slots");
+    $("dailyDot").style.display=S.daily.claimed.every(c=>c)?"none":"inline";
+    $("prestigeOpenBtn").style.display=S.bestHeightThisPrestige>=50?"block":"none";
+    NET.renderLb();
+  }else if(state===ST.OVER){
+    $("resultsUI").style.display="flex";
+    $("rHeight").textContent=run.height;
+    $("rRecord").textContent=run.height>=S.bestHeight&&run.height>0?"★ NEW RECORD":"best: "+S.bestHeight;
+    $("rDust").textContent="✦ "+run.dust;
+    $("rEcho").textContent="✦ "+Math.round(run.echoDust);
+    $("rPerfects").textContent=run.perfects;
+    $("doubleBtn").disabled=run.doubleUsed;
+  }
+  $("topHud").style.display=state===ST.RUN?"flex":"none";
+  $("heightHud").style.display=state===ST.RUN?"block":"none";
+  $("comboHud").style.display=state===ST.RUN?"block":"none";
+  $("multHud").textContent="×"+globalMult().toFixed(1);
+}
+$("playBtn").onclick=()=>{sUi();hideAll();startRun();};
+$("retryBtn").onclick=()=>{sUi();hideAll();startRun();};
+$("homeBtn").onclick=()=>{sUi();resetHome();};
+$("muteBtn").onclick=()=>{S.muted=!S.muted;save();ui();};
+
+/* upgrades */
+$("upgOpenBtn").onclick=()=>{sUi();renderUpgrades();$("homeUI").style.display="none";$("upgradesUI").style.display="flex";};
+$("upgClose").onclick=()=>{sUi();ui();};
+function renderUpgrades(){
+  $("uDust").textContent="✦ "+S.dust;
+  const list=$("upgList"); list.innerHTML="";
+  for(const id in UPG){
+    const u=UPG[id], lvl=S.upgrades[id], cost=upgCost(id), maxed=lvl>=u.max;
+    const div=document.createElement("div"); div.className="upg";
+    div.innerHTML=`<div class="info"><div class="name">${u.name} <span class="tag">Lv ${lvl}${maxed?" MAX":""}</span></div><div class="desc">${u.desc}</div></div>`;
+    const b=document.createElement("button");
+    b.textContent=maxed?"MAX":"✦ "+cost;
+    b.disabled=maxed||S.dust<cost;
+    b.onclick=()=>{ if(S.dust>=cost&&!maxed){S.dust-=cost;S.upgrades[id]++;save();sPerfect();renderUpgrades();} };
+    div.appendChild(b); list.appendChild(div);
+  }
+}
+/* dailies */
+$("dailyOpenBtn").onclick=()=>{sUi();renderDailies();$("homeUI").style.display="none";$("dailyUI").style.display="flex";};
+$("dailyClose").onclick=()=>{sUi();ui();};
+function renderDailies(){
+  checkDailyReset();
+  const list=$("dailyList"); list.innerHTML="";
+  DAILIES.forEach((d,i)=>{
+    const p=Math.min(S.daily.prog[i],d.target), done=S.daily.claimed[i];
+    const div=document.createElement("div"); div.className="daily";
+    div.innerHTML=`${done?"✅":"◻"} ${d.label} <span style="color:#8E9BFF">(${p}/${d.target})</span> <span class="gold" style="float:right">+100 ✦</span><div class="bar"><i style="width:${(p/d.target*100).toFixed(0)}%"></i></div>`;
+    list.appendChild(div);
+  });
+}
+/* prestige */
+const novaGain=()=>Math.max(1,Math.floor(Math.pow(Math.max(0,S.bestHeightThisPrestige-40),0.8)));
+$("prestigeOpenBtn").onclick=()=>{sUi();$("pGain").textContent="◉ "+novaGain()+" photons";$("pMult").textContent="×"+(1+(S.photons+novaGain())*0.1).toFixed(1);$("homeUI").style.display="none";$("prestigeUI").style.display="flex";};
+$("prestigeClose").onclick=()=>{sUi();ui();};
+$("prestigeBtn").onclick=()=>{
+  S.photons+=novaGain(); S.prestige++;
+  S.dust=0; S.upgrades=defaultSave().upgrades; S.echoes=[]; S.bestHeightThisPrestige=0;
+  save(); sNova(); toast("SUPERNOVA — your star burns brighter");
+  resetHome();
+};
+/* simulated rewarded ads */
+function playAd(cb){
+  $("adUI").style.display="flex";
+  let n=3; $("adCount").textContent=n;
+  const iv=setInterval(()=>{ n--; if(n<=0){clearInterval(iv);$("adUI").style.display="none";cb();} else $("adCount").textContent=n; },1000);
+}
+$("doubleBtn").onclick=()=>{
+  if(run.doubleUsed)return; sUi();
+  playAd(()=>{
+    run.doubleUsed=true;
+    const bonus=run.dust+Math.round(run.echoDust);
+    S.dust+=bonus; save();
+    toast("×2 !  +"+bonus+" ✦"); sPerfect(); ui();
+  });
+};
+
+/* ---------- boot ---------- */
+checkDailyReset(); resetHome(); save();
+</script>
+</body>
+</html>

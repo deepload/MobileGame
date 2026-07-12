@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B1026">
+<title>ECHO ORBIT — Prototype Hub</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{min-height:100vh;background:linear-gradient(#0B1026,#1B2350);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#EAF2FF;display:flex;flex-direction:column;align-items:center;padding:40px 20px}
+  h1{font-size:30px;letter-spacing:4px;font-weight:900;background:linear-gradient(90deg,#5DF2C8,#8E9BFF,#B388FF);-webkit-background-clip:text;background-clip:text;color:transparent;text-align:center}
+  .sub{color:#8E9BFF;font-size:13.5px;margin:6px 0 28px;text-align:center;max-width:420px}
+  .grid{display:grid;gap:14px;width:100%;max-width:440px}
+  a.card{display:block;text-decoration:none;color:inherit;background:rgba(11,16,38,.7);border:1px solid rgba(142,155,255,.25);border-radius:18px;padding:18px 20px;transition:transform .15s,border-color .15s}
+  a.card:hover{transform:translateY(-2px);border-color:#5DF2C8}
+  .card .title{font-size:18px;font-weight:800}
+  .card .tag{float:right;font-size:11px;font-weight:700;border-radius:6px;padding:3px 8px}
+  .flag{background:rgba(93,242,200,.15);color:#5DF2C8}
+  .lab{background:rgba(142,155,255,.15);color:#8E9BFF}
+  .card p{margin-top:6px;font-size:13px;color:#aab6e8;line-height:1.45}
+  .flagship{border-color:rgba(93,242,200,.55);box-shadow:0 0 24px rgba(93,242,200,.12)}
+  .foot{margin-top:28px;font-size:12px;color:#5b689f;text-align:center;max-width:420px;line-height:1.6}
+</style>
+</head>
+<body>
+  <h1>ECHO ORBIT</h1>
+  <div class="sub">Prototype hub — every concept from the ideation doc, playable. All offline, one hand, English. Progress saves locally.</div>
+  <div class="grid">
+    <a class="card flagship" href="echo-orbit.html">
+      <span class="tag flag">FLAGSHIP — final concept</span>
+      <div class="title">◉ Echo Orbit</div>
+      <p>Tap to leap orbit to orbit, forever upward. Your best runs fly beside you as Echoes and earn for you. Full meta: upgrades, prestige (Supernova), daily challenges, simulated rewarded ads.</p>
+    </a>
+    <a class="card" href="sky-stack.html">
+      <span class="tag lab">V0 — rejected concept</span>
+      <div class="title">▦ Sky Stack</div>
+      <p>The first idea: tap to stack swinging blocks. Fun for a minute — play it to feel <em>why</em> the investor critique rejected it as derivative and shallow.</p>
+    </a>
+    <a class="card" href="loop-garden.html">
+      <span class="tag lab">Variant B</span>
+      <div class="title">✿ Loop Garden</div>
+      <p>Draw loops around drifting fireflies to capture their light and grow an everlasting garden. Zen and lovely — but a two-dimensional gesture, weaker one-thumb fit.</p>
+    </a>
+    <a class="card" href="tidal.html">
+      <span class="tag lab">Variant C</span>
+      <div class="title">≈ Tidal</div>
+      <p>Hold to pull the tide, release to send a wave that pushes shells past the treasure line. Satisfying, but the skill ceiling is low — you watch more than you play.</p>
+    </a>
+  </div>
+  <div class="foot">Design package in /docs · Production target: Flutter + Flame (see /flutter_app)<br>Prototype quality bar: feel-testing only, not final art or tuning.</div>
+</body>
+</html>

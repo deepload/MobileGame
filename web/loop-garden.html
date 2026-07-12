@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>LOOP GARDEN — prototype B</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none}
+  html,body{height:100%;overflow:hidden;background:#0B1026;font-family:system-ui,sans-serif;color:#EAF2FF}
+  #game{position:fixed;inset:0;touch-action:none}
+  #hud{position:fixed;top:14px;left:0;right:0;text-align:center;pointer-events:none}
+  .pill{display:inline-block;background:rgba(11,16,38,.55);border:1px solid rgba(142,155,255,.25);border-radius:999px;padding:6px 16px;font-size:14px;font-weight:700;margin:0 4px}
+  #msg{position:fixed;bottom:12%;left:0;right:0;text-align:center;font-size:15px;color:#8E9BFF;pointer-events:none;transition:opacity 1s}
+  a.back{position:fixed;top:12px;left:14px;z-index:5;color:#8E9BFF;font-size:13px;text-decoration:none;background:rgba(11,16,38,.55);padding:7px 12px;border-radius:999px;border:1px solid rgba(142,155,255,.25)}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<a class="back" href="index.html">← Hub</a>
+<div id="hud"><span class="pill" style="color:#FFD166">✧ <span id="light">0</span> light</span><span class="pill" style="color:#5DF2C8">garden lv <span id="lvl">0</span></span></div>
+<div id="msg">Draw a loop around the fireflies</div>
+<script>
+"use strict";
+const cv=document.getElementById("game"),cx=cv.getContext("2d");
+let W,H,DPR;
+function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;cx.setTransform(DPR,0,0,DPR,0,0);}
+addEventListener("resize",resize);resize();
+let AC=null;function tone(f,d,v,type="sine",when=0){try{AC=AC||new (AudioContext||webkitAudioContext)();if(AC.state==="suspended")AC.resume();const t=AC.currentTime+when,o=AC.createOscillator(),g=AC.createGain();o.type=type;o.frequency.value=f;g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(v,t+.01);g.gain.exponentialRampToValueAtTime(.0001,t+d);o.connect(g).connect(AC.destination);o.start(t);o.stop(t+d+.05);}catch(e){}}
+
+let light=+localStorage.getItem("loopGardenLight")||0;
+const flies=[],sparks=[],path=[];
+let drawing=false,msgFade=null,t=0;
+const TAU=Math.PI*2;
+
+function spawnFly(golden){
+  flies.push({x:Math.random()*W,y:Math.random()*H*.7+H*.06,a:Math.random()*TAU,turn:0,sp:golden?70:34+Math.random()*22,golden:!!golden,tw:Math.random()*TAU,caught:0});
+}
+for(let i=0;i<11;i++)spawnFly(false);
+
+function segInt(ax,ay,bx,by,cx2,cy,dx,dy){
+  const d=(bx-ax)*(dy-cy)-(by-ay)*(dx-cx2);if(Math.abs(d)<1e-9)return null;
+  const u=((cx2-ax)*(dy-cy)-(cy-ay)*(dx-cx2))/d,v=((cx2-ax)*(by-ay)-(cy-ay)*(bx-ax))/d;
+  if(u<0||u>1||v<0||v>1)return null;return{x:ax+u*(bx-ax),y:ay+u*(by-ay)};
+}
+function pip(px,py,poly){ // point in polygon
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;
+    if(((yi>py)!==(yj>py))&&(px<(xj-xi)*(py-yi)/(yj-yi)+xi))inside=!inside;
+  }
+  return inside;
+}
+function msg(s){const el=document.getElementById("msg");el.textContent=s;el.style.opacity=1;clearTimeout(msgFade);msgFade=setTimeout(()=>el.style.opacity=0,2200);}
+function ui(){document.getElementById("light").textContent=light;document.getElementById("lvl").textContent=Math.floor(Math.sqrt(light/10));}
+
+function addPoint(x,y){
+  const n=path.length;
+  if(n&&Math.hypot(x-path[n-1].x,y-path[n-1].y)<9)return;
+  // check closure against earlier segments (skip 2 nearest)
+  if(n>=3){
+    for(let i=0;i<n-3;i++){
+      const hit=segInt(path[n-1].x,path[n-1].y,x,y,path[i].x,path[i].y,path[i+1].x,path[i+1].y);
+      if(hit){
+        const poly=[hit,...path.slice(i+1,n)];
+        closeLoop(poly);return;
+      }
+    }
+  }
+  path.push({x,y});
+  if(path.length>90)path.shift();
+}
+function closeLoop(poly){
+  let caught=0,gold=0;
+  for(const f of flies){ if(!f.caught&&pip(f.x,f.y,poly)){ f.caught=0.001; caught++; if(f.golden)gold++; } }
+  path.length=0;
+  if(caught===0){msg("empty loop… try circling them");tone(220,.15,.06);return;}
+  const gain=caught+gold*9+(caught>=3?caught*2:0);
+  light+=gain;localStorage.setItem("loopGardenLight",light);
+  const notes=[523,587,659,784,880,1046];
+  for(let i=0;i<Math.min(caught+gold*3,6);i++)tone(notes[i],.3,.12,"sine",i*.07);
+  msg(caught+" caught!"+(gold?" GOLDEN +9!":"")+(caught>=3?"  multi-bonus!":"")+"  +"+gain+" ✧");
+  ui();
+}
+cv.addEventListener("pointerdown",e=>{drawing=true;path.length=0;addPoint(e.clientX,e.clientY);});
+cv.addEventListener("pointermove",e=>{if(drawing)addPoint(e.clientX,e.clientY);});
+addEventListener("pointerup",()=>{drawing=false;setTimeout(()=>{if(!drawing)path.length=0;},350);});
+
+let last=performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt=(now-last)/1000;last=now;if(dt>.1)dt=.016;t+=dt;
+  // flies wander
+  for(let i=flies.length-1;i>=0;i--){
+    const f=flies[i];
+    if(f.caught){ f.caught+=dt; f.y-=60*dt; if(f.caught>1){flies.splice(i,1);spawnFly(Math.random()<0.06);} continue; }
+    f.turn+=(Math.random()-.5)*4*dt; f.turn*=.95; f.a+=f.turn*dt*8;
+    f.x+=Math.cos(f.a)*f.sp*dt; f.y+=Math.sin(f.a)*f.sp*dt;
+    if(f.x<20||f.x>W-20)f.a=Math.PI-f.a;
+    if(f.y<H*.05||f.y>H*.78)f.a=-f.a;
+    f.x=Math.max(10,Math.min(W-10,f.x));f.y=Math.max(H*.04,Math.min(H*.8,f.y));
+  }
+  if(Math.random()<dt*0.05&&flies.length<16)spawnFly(true); // occasional golden
+  // render
+  const g=cx.createLinearGradient(0,0,0,H);g.addColorStop(0,"#0B1026");g.addColorStop(.7,"#14224a");g.addColorStop(1,"#0e2b26");cx.fillStyle=g;cx.fillRect(0,0,W,H);
+  drawGarden();
+  // path
+  if(path.length>1){
+    cx.strokeStyle="rgba(93,242,200,.7)";cx.lineWidth=3;cx.lineCap="round";cx.lineJoin="round";cx.shadowColor="#5DF2C8";cx.shadowBlur=10;
+    cx.beginPath();cx.moveTo(path[0].x,path[0].y);
+    for(let i=1;i<path.length;i++)cx.lineTo(path[i].x,path[i].y);
+    cx.stroke();cx.shadowBlur=0;
+  }
+  // flies
+  for(const f of flies){
+    const a=f.caught?1-f.caught:.55+.45*Math.abs(Math.sin(t*3+f.tw));
+    cx.globalAlpha=a;
+    cx.fillStyle=f.golden?"#FFD166":"#B7F5D8";cx.shadowColor=f.golden?"#FFD166":"#5DF2C8";cx.shadowBlur=f.golden?16:9;
+    cx.beginPath();cx.arc(f.x,f.y,f.golden?5:3.4,0,TAU);cx.fill();
+    // wings
+    cx.globalAlpha=a*.5;
+    const w=Math.sin(t*20+f.tw)*4;
+    cx.beginPath();cx.ellipse(f.x-4,f.y-3,3,5+w,-.5,0,TAU);cx.ellipse(f.x+4,f.y-3,3,5-w,.5,0,TAU);cx.fill();
+    cx.shadowBlur=0;cx.globalAlpha=1;
+  }
+}
+function drawGarden(){
+  const lvl=Math.floor(Math.sqrt(light/10));
+  const ground=H*.92;
+  cx.fillStyle="#0e2b26";cx.fillRect(0,ground,W,H-ground);
+  const n=Math.min(2+lvl,12);
+  for(let i=0;i<n;i++){
+    const px=W*(i+0.5)/n, grow=Math.min(1,(light-i*10)/40+.3);
+    if(grow<=0)continue;
+    const hgt=(30+((i*37)%50))*grow*(1+lvl*.06);
+    const sway=Math.sin(t*.8+i)*4*grow;
+    cx.strokeStyle="#3CC9A8";cx.lineWidth=2.5;
+    cx.beginPath();cx.moveTo(px,ground);cx.quadraticCurveTo(px+sway,ground-hgt*.6,px+sway*1.6,ground-hgt);cx.stroke();
+    if(grow>.5){ // bloom
+      cx.fillStyle=i%3===0?"#FF7E6B":i%3===1?"#B388FF":"#FFD166";
+      cx.shadowColor=cx.fillStyle;cx.shadowBlur=10;
+      cx.beginPath();cx.arc(px+sway*1.6,ground-hgt,4+grow*3,0,TAU);cx.fill();cx.shadowBlur=0;
+    }
+  }
+}
+requestAnimationFrame(frame);ui();
+</script>
+</body>
+</html>

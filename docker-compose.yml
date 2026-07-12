@@ -1,0 +1,18 @@
+services:
+  backend:
+    build: ./server
+    container_name: echo-orbit-backend
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./server/data:/app/data   # leaderboards & saves survive restarts
+    restart: unless-stopped
+
+  web:
+    image: nginx:alpine
+    container_name: echo-orbit-web
+    ports:
+      - "8090:80"
+    volumes:
+      - ./web:/usr/share/nginx/html:ro   # serves the prototypes over the LAN
+    restart: unless-stopped
