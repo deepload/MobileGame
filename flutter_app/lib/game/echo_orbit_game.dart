@@ -8,6 +8,7 @@ import 'package:flutter/painting.dart'
     show HSLColor, TextPainter, TextSpan, TextStyle;
 
 import '../services/api.dart';
+import '../services/live.dart';
 import '../services/music.dart';
 import '../services/storage.dart';
 
@@ -176,6 +177,33 @@ const upgradeDefs = [
       growth: 1.8),
 ];
 
+/// Market cosmetics: skins recolor your star and its comet trail.
+/// Pure style — no gameplay power, so competition stays fair.
+class SkinDef {
+  const SkinDef(this.id, this.name, this.desc, this.color, this.cost,
+      {this.premium = false});
+  final String id;
+  final String name;
+  final String desc;
+  final Color color;
+  final int cost; // stardust — or photons when premium
+  final bool premium;
+}
+
+const skinDefs = [
+  SkinDef('comet', 'Comet Blue', 'Cool and steady', Color(0xFF6BB8FF), 1500),
+  SkinDef('jade', 'Deep Jade', 'Old-forest calm', Color(0xFF4CE0A0), 3500),
+  SkinDef('rose', 'Rose Nova', 'Sweet but deadly', Color(0xFFFF7EC2), 8000),
+  SkinDef('ember', 'Ember Heart', 'Runs hot', Color(0xFFFF8A50), 16000),
+  SkinDef('solar', 'Solar Flare', 'Blinding pace', Color(0xFFFFE066), 32000),
+  SkinDef('aurora', 'Aurora', 'Northern lights made star', Color(0xFF9DFFE8), 3,
+      premium: true),
+  SkinDef('void', 'Void Touched', 'It looked back', Color(0xFFC58CFF), 8,
+      premium: true),
+  SkinDef('singular', 'Singularity', 'All light, no escape', Color(0xFFFFFFFF), 20,
+      premium: true),
+];
+
 /// Daily challenge definitions.
 class DailyDef {
   const DailyDef(this.label, this.target);
@@ -289,6 +317,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
   final Storage storage;
   final Api api;
   final MusicEngine music = MusicEngine();
+  final LiveRoom live = LiveRoom(); // real players in this universe, right now
   SaveData get profile => storage.data;
 
   // UI-observable state.
@@ -369,6 +398,10 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
   double _recT = 0;
   final List<double> _rec = [];
   double _echoFrac = 0;
+  double _liveT = 0; // live-position send throttle (~10 Hz)
+  double _playAcc = 0; // sub-second play-time accumulator
+  double _pingT = 0; // server health-check countdown (home screen)
+  bool _pinging = false;
 
   /* ---------- upgrade effects (soft asymptotes — endless but bounded) ---- */
   int upgLevel(String id) => profile.upgrades[id] ?? 0;
@@ -406,6 +439,42 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     return true;
   }
 
+  /* ---------- market (cosmetics) ---------- */
+  /// The Market opens once the first run is done (i.e. after the tutorial).
+  bool get marketUnlocked => profile.totalRuns >= 1;
+  bool ownsSkin(String id) => profile.skinsOwned.contains(id);
+
+  bool buySkin(SkinDef def) {
+    if (ownsSkin(def.id)) return false;
+    if (def.premium) {
+      if (profile.photons < def.cost) return false;
+      profile.photons -= def.cost;
+    } else {
+      if (profile.dust < def.cost) return false;
+      profile.dust -= def.cost;
+    }
+    profile.skinsOwned.add(def.id);
+    profile.skin = def.id; // wear it right away
+    storage.save();
+    profileVersion.value++;
+    return true;
+  }
+
+  void equipSkin(String id) {
+    if (id.isNotEmpty && !ownsSkin(id)) return;
+    profile.skin = id;
+    storage.save();
+    profileVersion.value++;
+  }
+
+  /// Star + trail color: equipped market skin, else the prestige tier color.
+  Color starColor() {
+    for (final s in skinDefs) {
+      if (s.id == profile.skin) return s.color;
+    }
+    return tierColor();
+  }
+
   /* ---------- prestige ---------- */
   bool get canPrestige => profile.bestThisPrestige >= 50;
   int get novaGain => math.max(
@@ -423,6 +492,34 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     goHome();
   }
 
+  /// Pilot name shown on leaderboards, ghost races and live rooms.
+  String get playerName => api.playerName;
+  bool get hasCustomName => (storage.playerName ?? '').isNotEmpty;
+
+  /// ALPHA login: first time = registers the pilot, next times = same two
+  /// fields. Offline falls back to a local guest name that syncs later.
+  Future<bool> login(String name, String password) async {
+    final n = name.trim();
+    final r = await api.enter(n, password);
+    if (r.ok) {
+      storage.setPlayerName(r.name);
+      _showToast(r.created
+          ? 'Pilot registered — you fly as ${r.name}'
+          : 'Welcome back, ${r.name}');
+    } else if (r.wrongPassword) {
+      _showToast('Wrong password for $n');
+    } else if (r.badInput) {
+      _showToast('Name min 2 chars, password min 3');
+    } else {
+      // Offline: keep the name locally, real login when the server is back.
+      storage.setPlayerName(n.isEmpty ? null : n);
+      api.displayName = n.isEmpty ? null : n;
+      _showToast('Offline — flying as guest, log in when connected');
+    }
+    profileVersion.value++;
+    return r.ok;
+  }
+
   /// Point the game at a private server (empty = back to the default) and
   /// re-auth + refetch the daily seed. Returns true when the server answered.
   Future<bool> setServer(String url) async {
@@ -431,8 +528,20 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     _remoteDailySeed = null;
     final s = await api.fetchDailySeed();
     if (s != null) _remoteDailySeed = s;
+    await api.ping(); // refresh the status dot right away
     profileVersion.value++;
     return api.connected;
+  }
+
+  /// Health-check the server and refresh the home UI when the state flips.
+  Future<void> refreshServerStatus() async {
+    if (_pinging) return;
+    _pinging = true;
+    final was = api.online;
+    final wasConn = api.connected;
+    await api.ping();
+    _pinging = false;
+    if (api.online != was || api.connected != wasConn) profileVersion.value++;
   }
 
   /// Full wipe — a brand-new game (unlike Supernova, nothing survives).
@@ -504,6 +613,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
 
   @override
   void onRemove() {
+    live.close();
     music.dispose();
     super.onRemove();
   }
@@ -651,6 +761,9 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
         _rivals = gs.map((g) => _Rival(g.name, g.path)).toList();
       }
     });
+    // Live multiplayer: join this universe's room — real players, real time.
+    live.connect(api.baseUrl, ws, api.playerName);
+    _liveT = 0;
     state.value = RunState.running;
     music.setTheme(ws, galaxy.difficulty);
     music.setHeight(0);
@@ -661,8 +774,10 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     _resetWorld();
     _ghosts = [];
     _rivals = [];
+    live.close();
     music.stop();
     state.value = RunState.home;
+    _pingT = 0; // re-check the server as soon as we're back home
     profileVersion.value++;
   }
 
@@ -701,6 +816,15 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
       if (r.flash > 0) r.flash = math.max(0, r.flash - dt * 1.8);
     }
 
+    // Home screen: keep the server status dot honest (ping every 10 s).
+    if (state.value == RunState.home) {
+      _pingT -= dt;
+      if (_pingT <= 0) {
+        _pingT = 10;
+        refreshServerStatus();
+      }
+    }
+
     if (_flying) {
       _pos.add(_vel * dt);
       _flightDist += _vel.length * dt;
@@ -723,13 +847,48 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
         _recT = 0;
         _rec..add(_pos.x)..add(_pos.y);
       }
+      // Live multiplayer: stream our position to the room (~10 Hz).
+      _liveT += dt;
+      if (_liveT >= 0.1) {
+        _liveT = 0;
+        live.send(_pos.x, _pos.y, height.value);
+      }
+      // Lifetime play time — the "proud of playing a lot" stat.
+      _playAcc += dt;
+      if (_playAcc >= 1) {
+        final s = _playAcc.floor();
+        _playAcc -= s;
+        profile.playSeconds += s;
+      }
       final targetY = _pos.y - size.y * 0.55;
       if (targetY < _camY) {
         _camY = lerpDouble(_camY, targetY, math.min(1, dt * 6))!;
+      } else if (!_flying && _pos.y > _camY + size.y * 0.75) {
+        // Player is below the view (e.g. rescued on a lower ring):
+        // bring the camera back down onto them.
+        _camY = lerpDouble(_camY, targetY, math.min(1, dt * 5))!;
       }
       _collectMotes(dt);
       _updateGhosts(dt);
       _updateRivals(dt);
+    } else if (state.value == RunState.over) {
+      // Spectator mode: after death, ghosts & rivals keep flying —
+      // the camera follows the leader so you can watch the race go on.
+      _updateGhosts(dt);
+      _updateRivals(dt);
+      double? leadY;
+      for (final g in _ghosts) {
+        if (!g.done) leadY = math.min(leadY ?? g.y, g.y);
+      }
+      for (final r in _rivals) {
+        if (!r.done) leadY = math.min(leadY ?? r.y, r.y);
+      }
+      for (final p in live.players.values) {
+        leadY = math.min(leadY ?? p.y, p.y);
+      }
+      if (leadY != null) {
+        _camY = lerpDouble(_camY, leadY - size.y * 0.45, math.min(1, dt * 2))!;
+      }
     }
 
     for (var i = _particles.length - 1; i >= 0; i--) {
@@ -762,6 +921,8 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
       final f = (g.t % 0.1) / 0.1;
       g.x = lerpDouble(g.path[idx], g.path[idx + 2], f)!;
       g.y = lerpDouble(g.path[idx + 1], g.path[idx + 3], f)!;
+      // Income only while the run is live (spectating after death is visual).
+      if (state.value != RunState.running) continue;
       final perSec = (g.dustVal * echoYield) / (g.path.length / 2 * 0.1);
       _echoFrac += perSec * dt * profile.globalMult;
       if (_echoFrac >= 25) {
@@ -833,7 +994,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
         .round();
     runDust.value += gain;
     _floats.add(_FloatText(_pos.x, _pos.y - 12, '+$gain', Palette.gold, 13));
-    _burst(perfect ? Palette.coral : tierColor(), perfect ? 16 : 9);
+    _burst(perfect ? Palette.coral : starColor(), perfect ? 16 : 9);
     _dailyProgress(0, r.index);
     while (_rings.length < r.index + 14) {
       _addRing();
@@ -847,6 +1008,11 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
       final r = _rings[_ringIndex];
       _angle = math.atan2(_pos.y - r.center.y, _pos.x - r.center.x);
       _syncOrbitPos();
+      // Respawn safety: if the rescue ring is outside the current view,
+      // snap the camera straight onto the player — never respawn off-screen.
+      if (_pos.y > _camY + size.y || _pos.y < _camY) {
+        _camY = _pos.y - size.y * 0.55;
+      }
       _floats.add(
           _FloatText(_pos.x, _pos.y - 24, 'SAVED! ($_saves left)', Palette.mint, 16));
       _burst(Palette.mint, 14);
@@ -861,6 +1027,8 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
   }
 
   void _endRun() {
+    if (state.value == RunState.over) return; // already ended — never bank twice
+    _flying = false; // stop the flight; otherwise _fall() retriggers every frame
     state.value = RunState.over;
     music.stop();
     profile.totalRuns++;
@@ -908,7 +1076,8 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     storage.save();
     profileVersion.value++;
     // Fire-and-forget backend sync (offline-first: failures are silent).
-    api.submitScore(height.value, perfects, profile.prestige);
+    api.submitScore(
+        height.value, perfects, profile.prestige, profile.galaxy, galaxy.name);
     api.pushSave(profile);
     // Ghost racing: publish this run so others on the same universe race it.
     if (height.value >= 3 && _rec.length > 20) {
@@ -1089,6 +1258,23 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
           Palette.coral.withValues(alpha: 0.75), 9);
     }
 
+    // LIVE players — real people flying this universe right now.
+    // Gold pulse + height tag so they read instantly as "alive".
+    final pulse = 0.7 + 0.3 * math.sin(_time * 5);
+    for (final p in live.players.values) {
+      canvas.drawCircle(Offset(p.x, p.y), 12,
+          Paint()..color = Palette.gold.withValues(alpha: 0.20 * pulse));
+      canvas.drawCircle(Offset(p.x, p.y), 6,
+          Paint()..color = const Color(0xFFFFFFFF).withValues(alpha: 0.95));
+      canvas.drawCircle(Offset(p.x, p.y), 6,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5
+            ..color = Palette.gold.withValues(alpha: 0.9));
+      _drawText(canvas, '${p.name} ▲${p.h}', p.x, p.y - 16,
+          Palette.gold.withValues(alpha: 0.9), 9);
+    }
+
     // aim guide — dashed arrow showing the launch direction (forward on purpose)
     if (state.value == RunState.running && !_flying) {
       final r = _rings[_ringIndex];
@@ -1118,7 +1304,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     }
 
     // trail + star — comet tail: fades & thins toward the oldest point
-    final tc = tierColor();
+    final tc = starColor();
     for (var i = 1; i < _trail.length; i++) {
       final f = i / _trail.length; // 0 = tail tip, 1 = at the star
       canvas.drawLine(
