@@ -132,4 +132,14 @@ class Storage {
   }
 
   void save() => _prefs.setString(_key, jsonEncode(data.toJson()));
+
+  /// Private server override (compete with friends on any hosted backend).
+  String? get serverUrl => _prefs.getString('serverUrl');
+  void setServerUrl(String? url) {
+    if (url == null || url.isEmpty) {
+      _prefs.remove('serverUrl');
+    } else {
+      _prefs.setString('serverUrl', url);
+    }
+  }
 }

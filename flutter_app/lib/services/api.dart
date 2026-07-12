@@ -7,10 +7,12 @@ import 'storage.dart';
 /// Backend client (Rust server in /server). Offline-first: every call is
 /// fire-and-forget with a short timeout; failures never affect gameplay.
 class Api {
-  Api({this.baseUrl = const String.fromEnvironment('API_URL',
-      defaultValue: 'http://localhost:8080')});
+  Api({String? baseUrl}) : baseUrl = baseUrl ?? defaultUrl;
 
-  final String baseUrl;
+  static const defaultUrl = String.fromEnvironment('API_URL',
+      defaultValue: 'http://localhost:8080');
+
+  String baseUrl; // mutable: in-game "private server" override
   String? _uid;
   String? _token;
   static const _timeout = Duration(seconds: 4);
@@ -35,6 +37,14 @@ class Api {
         _token = j['token'] as String?;
       }
     } catch (_) {/* offline: fine */}
+  }
+
+  /// Switch to another server (private server play) and re-authenticate.
+  Future<void> setServer(String url) async {
+    baseUrl = url.isEmpty ? defaultUrl : url;
+    _uid = null;
+    _token = null;
+    await init();
   }
 
   /// Daily seed from remote config — everyone races the same universe today.

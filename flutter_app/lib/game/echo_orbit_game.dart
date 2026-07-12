@@ -4,7 +4,8 @@ import 'dart:ui';
 import 'package:flame/events.dart';
 import 'package:flame/game.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/painting.dart' show TextPainter, TextSpan, TextStyle;
+import 'package:flutter/painting.dart'
+    show HSLColor, TextPainter, TextSpan, TextStyle;
 
 import '../services/api.dart';
 import '../services/music.dart';
@@ -105,26 +106,74 @@ const galaxies = [
       seedSalt: 852741963),
 ];
 
+const _gNameA = [
+  'CRIMSON', 'AZURE', 'OBSIDIAN', 'SOLAR', 'PHANTOM', 'RADIANT',
+  'ASHEN', 'ETERNAL', 'SHATTERED', 'HOLLOW', 'GILDED', 'SILENT',
+];
+const _gNameB = [
+  'DRIFT', 'CROWN', 'ABYSS', 'CASCADE', 'SPIRE', 'HALO',
+  'EXPANSE', 'REACH', 'TEMPEST', 'GARDEN', 'FORGE', 'VEIL',
+];
+
+final Map<int, GalaxyDef> _galaxyCache = {};
+
+/// Endless galaxy ladder: the first 4 are handcrafted, everything beyond is
+/// generated deterministically forever. Balance rule: rewards grow slightly
+/// faster than difficulty, so pushing deeper is always the optimal play —
+/// there is no end for speedrunners and tryharders.
+GalaxyDef galaxyAt(int i) {
+  if (i < 0) return galaxies[0];
+  if (i < galaxies.length) return galaxies[i];
+  return _galaxyCache.putIfAbsent(i, () {
+    final k = i - (galaxies.length - 1); // sectors past VOID BLOOM
+    final hue = (i * 47.0) % 360;
+    return GalaxyDef(
+      id: 'gx$i',
+      name:
+          '${_gNameA[i * 7 % _gNameA.length]} ${_gNameB[i * 13 % _gNameB.length]}${i >= 16 ? ' $k' : ''}',
+      tagline: 'Uncharted space — sector $k',
+      bgTop: HSLColor.fromAHSL(1, hue, 0.55, 0.06).toColor(),
+      bgBottom: HSLColor.fromAHSL(1, (hue + 24) % 360, 0.50, 0.14).toColor(),
+      ring: HSLColor.fromAHSL(1, (hue + 180) % 360, 0.85, 0.72).toColor(),
+      accent: HSLColor.fromAHSL(1, (hue + 120) % 360, 0.90, 0.70).toColor(),
+      difficulty: 1.6 + k * 0.12,
+      reward: 2.6 * math.pow(1.30, k).toDouble(),
+      unlockHeight: 60 + k * 12,
+      seedSalt: (i * 2654435761) & 0x7fffffffffff,
+    );
+  });
+}
+
 /// Permanent upgrade definitions (docs/02 economy).
+///
+/// Endless progression (tryhard-friendly): no level caps. Balance comes from
+/// two opposing curves — effects follow soft asymptotes l/(l+c) (every level
+/// helps, none ever breaks the game) while costs grow geometrically faster
+/// than income, so each next level is a real goal, forever.
 class UpgradeDef {
-  const UpgradeDef(this.id, this.name, this.desc, this.base, this.max);
+  const UpgradeDef(this.id, this.name, this.desc, this.base,
+      {this.growth = 1.7});
   final String id;
   final String name;
   final String desc;
   final int base;
-  final int max;
+  final double growth;
 
-  int cost(int level) => (base * math.pow(1.6, level)).round();
+  int cost(int level) => (base * math.pow(growth, level)).round();
 }
 
 const upgradeDefs = [
-  UpgradeDef('guide', 'Aim Guide', 'Longer launch preview line', 30, 6),
-  UpgradeDef('magnet', 'Dust Magnet', 'Pull stardust from farther away', 40, 6),
-  UpgradeDef('save', 'Save Ring', 'Extra rescue per run', 150, 2),
-  UpgradeDef('slots', 'Echo Slots', 'More ghost runs earn beside you', 120, 2),
-  UpgradeDef('yield', 'Echo Yield', 'Echoes earn a bigger share', 80, 6),
-  UpgradeDef('keeper', 'Combo Keeper', 'Chance to keep combo when rescued', 100, 5),
-  UpgradeDef('precision', 'Star Sense', 'Slightly wider capture window', 90, 5),
+  UpgradeDef('guide', 'Aim Guide', 'Longer launch preview line', 60),
+  UpgradeDef('magnet', 'Dust Magnet', 'Pull stardust from farther away', 80),
+  UpgradeDef('save', 'Save Ring', 'Extra rescue per run', 400, growth: 2.2),
+  UpgradeDef('slots', 'Echo Slots', 'More ghost runs earn beside you', 300,
+      growth: 2.0),
+  UpgradeDef('yield', 'Echo Yield', 'Echoes earn a bigger share', 160,
+      growth: 1.75),
+  UpgradeDef('keeper', 'Combo Keeper', 'Chance to keep combo when rescued', 200,
+      growth: 1.75),
+  UpgradeDef('precision', 'Star Sense', 'Slightly wider capture window', 180,
+      growth: 1.8),
 ];
 
 /// Daily challenge definitions.
@@ -164,6 +213,7 @@ class Ring {
   final double moveAmp;
   final double movePhase;
   final bool storm;
+  double flash = 0; // 1 → 0 blink after the star leaves this ring
 
   void update(double t) {
     if (moveAmp > 0) {
@@ -207,6 +257,20 @@ class _Ghost {
   double x = 0, y = 0;
 }
 
+class _Star {
+  _Star(this.x, this.y, this.size, this.par, this.phase, this.tint);
+  final double x, y, size;
+  final double par; // parallax factor (0 = fixed sky, 1 = world speed)
+  final double phase; // twinkle offset
+  final bool tint; // a few stars take the galaxy accent color
+}
+
+class _Nebula {
+  _Nebula(this.x, this.y, this.radius, this.par, this.color);
+  final double x, y, radius, par;
+  final Color color;
+}
+
 /// Another player's run replaying live on the same universe (ghost racing).
 class _Rival {
   _Rival(this.name, this.path);
@@ -246,29 +310,28 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
   int get dailySeed =>
       _remoteDailySeed ?? (dayKey() * 2654435761) % 4294967291;
 
-  /* ---------- galaxies ---------- */
-  GalaxyDef get galaxy =>
-      galaxies[profile.galaxy.clamp(0, galaxies.length - 1)];
+  /* ---------- galaxies (endless ladder) ---------- */
+  GalaxyDef get galaxy => galaxyAt(profile.galaxy);
 
   /// Seed family: the same seed number is a different universe per galaxy.
   int get worldSeed => runSeed ^ galaxy.seedSalt;
 
   bool galaxyUnlocked(int i) {
     if (i <= 0) return true;
-    if (i >= galaxies.length) return false;
-    return (profile.galaxyBest[galaxies[i - 1].id] ?? 0) >=
-        galaxies[i].unlockHeight;
+    return (profile.galaxyBest[galaxyAt(i - 1).id] ?? 0) >=
+        galaxyAt(i).unlockHeight;
   }
 
   void selectGalaxy(int i) {
-    if (i < 0 || i >= galaxies.length || i == profile.galaxy) return;
+    if (i < 0 || i == profile.galaxy) return;
     if (!galaxyUnlocked(i)) {
       _showToast(
-          'Reach height ${galaxies[i].unlockHeight} in ${galaxies[i - 1].name} to unlock ${galaxies[i].name}');
+          'Reach height ${galaxyAt(i).unlockHeight} in ${galaxyAt(i - 1).name} to unlock ${galaxyAt(i).name}');
       return;
     }
     profile.galaxy = i;
     storage.save();
+    music.setTheme(worldSeed, galaxy.difficulty);
     _resetWorld();
     profileVersion.value++;
   }
@@ -286,6 +349,12 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
   List<_Rival> _rivals = [];
   int _rivalFetchSeed = 0;
 
+  // Procedural space sky (per-galaxy starfield + nebulae).
+  final List<_Star> _stars = [];
+  final List<_Nebula> _nebulae = [];
+  int _skyGalaxy = -1;
+  double _skyW = 0, _skyH = 0;
+
   // Star state.
   bool _flying = false;
   int _ringIndex = 0;
@@ -301,20 +370,35 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
   final List<double> _rec = [];
   double _echoFrac = 0;
 
-  /* ---------- upgrade effects ---------- */
+  /* ---------- upgrade effects (soft asymptotes — endless but bounded) ---- */
   int upgLevel(String id) => profile.upgrades[id] ?? 0;
-  double get guideLen => 40 + upgLevel('guide') * 38;
-  double get magnetR => 34 + upgLevel('magnet') * 16;
+  double get guideLen => 40 + 170 * _soft(upgLevel('guide'), 6);
+  double get magnetR => 34 + 90 * _soft(upgLevel('magnet'), 8);
   int get savesMax => 1 + upgLevel('save');
   int get echoSlots => 1 + upgLevel('slots');
-  double get echoYield => 0.10 + upgLevel('yield') * 0.05;
-  double get keeperChance => upgLevel('keeper') * 0.15;
-  double get precisionMult => 1 + upgLevel('precision') * 0.06;
+  double get echoYield => 0.10 + 0.60 * _soft(upgLevel('yield'), 8);
+  double get keeperChance => 0.90 * _soft(upgLevel('keeper'), 5);
+  double get precisionMult => 1 + 0.5 * _soft(upgLevel('precision'), 7);
+
+  static double _soft(int l, int c) => l / (l + c);
+
+  /// Human-readable effect at a given level — shown as "now → next" in the
+  /// shop so progression is always understandable.
+  String upgValue(String id, int l) => switch (id) {
+        'guide' => '${(40 + 170 * _soft(l, 6)).round()} reach',
+        'magnet' => '${(34 + 90 * _soft(l, 8)).round()} range',
+        'save' => '${1 + l} rescues',
+        'slots' => '${1 + l} echoes',
+        'yield' => '${(100 * (0.10 + 0.60 * _soft(l, 8))).round()}%',
+        'keeper' => '${(90 * _soft(l, 5)).round()}%',
+        'precision' => '+${(50 * _soft(l, 7)).round()}% window',
+        _ => '',
+      };
 
   bool buyUpgrade(UpgradeDef def) {
     final lvl = upgLevel(def.id);
     final cost = def.cost(lvl);
-    if (lvl >= def.max || profile.dust < cost) return false;
+    if (profile.dust < cost) return false;
     profile.dust -= cost;
     profile.upgrades[def.id] = lvl + 1;
     storage.save();
@@ -337,6 +421,18 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     storage.save();
     _showToast('SUPERNOVA - your star burns brighter');
     goHome();
+  }
+
+  /// Point the game at a private server (empty = back to the default) and
+  /// re-auth + refetch the daily seed. Returns true when the server answered.
+  Future<bool> setServer(String url) async {
+    storage.setServerUrl(url.isEmpty ? null : url);
+    await api.setServer(url);
+    _remoteDailySeed = null;
+    final s = await api.fetchDailySeed();
+    if (s != null) _remoteDailySeed = s;
+    profileVersion.value++;
+    return api.connected;
   }
 
   /// Full wipe — a brand-new game (unlike Supernova, nothing survives).
@@ -403,6 +499,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     _resetWorld();
     _camY = -size.y * 0.62;
     await music.init();
+    music.setTheme(worldSeed, galaxy.difficulty);
   }
 
   @override
@@ -440,16 +537,24 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     // height 40 is always "height-40 hard" and no universe is unfairly brutal.
     // Galaxy multiplier is part of layer 1: deterministic, same for all seeds
     // of that galaxy — harder galaxies stay fair from seed to seed.
+    // ENDLESS curves: asymptote + slow linear tail. Height never stops getting
+    // harder, but the slope flattens so it remains humanly fair forever.
     final gd = galaxy.difficulty;
     final breather = !first && i % 8 == 7; // guaranteed easy ring every bar
-    final baseRadius =
-        lerpDouble(63, 45, (i / 60).clamp(0, 1))! - (gd - 1) * 14;
-    final speedUp = (1 + math.min(i * 0.012, 0.55)) * (1 + (gd - 1) * 0.65);
-    final stormChance = (0.16 + math.min(i * 0.003, 0.24)) * gd;
+    final baseRadius = 63 -
+        18 * (i / (i + 60)) -
+        math.min(8, i * 0.008) -
+        math.min(16.0, (gd - 1) * 14);
+    final speedUp =
+        (1 + 0.55 * (i / (i + 40)) + i * 0.0012) * (1 + (gd - 1) * 0.65);
+    final stormChance =
+        ((0.16 + 0.24 * (i / (i + 80)) + math.min(0.15, i * 0.0002)) * gd)
+            .clamp(0.0, 0.6);
     // Layer 2 — the seed only shuffles within those fair bounds.
     final radius = first
         ? 70.0
-        : baseRadius + _rng.nextDouble() * 10 + (breather ? 8 : 0);
+        : math.max(
+            24.0, baseRadius + _rng.nextDouble() * 10 + (breather ? 8 : 0));
     final prevX = first ? size.x * 0.5 : _rings[i - 1].center.x;
     final x = first
         ? size.x * 0.5
@@ -466,7 +571,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
         !storm &&
         i > 7 &&
         _rings[i - 1].moveAmp == 0 &&
-        _rng.nextDouble() < 0.30;
+        _rng.nextDouble() < math.min(0.5, 0.30 + i * 0.0005);
     final ring = Ring(
       index: i,
       center: Vector2(x, -i * spacing),
@@ -514,6 +619,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
   void startRun({int? seed, int? galaxyIndex}) {
     checkDailyReset();
     if (galaxyIndex != null &&
+        galaxyIndex >= 0 &&
         galaxyIndex != profile.galaxy &&
         galaxyUnlocked(galaxyIndex)) {
       profile.galaxy = galaxyIndex;
@@ -546,6 +652,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
       }
     });
     state.value = RunState.running;
+    music.setTheme(ws, galaxy.difficulty);
     music.setHeight(0);
     music.start();
   }
@@ -578,6 +685,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
       _vel.scale(flightSpeed);
       _flying = true;
       _flightDist = 0;
+      r.flash = 1.0; // departed ring blinks goodbye
     } else if (state.value == RunState.home) {
       startRun();
     }
@@ -590,6 +698,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     _time += dt;
     for (final r in _rings) {
       r.update(_time);
+      if (r.flash > 0) r.flash = math.max(0, r.flash - dt * 1.8);
     }
 
     if (_flying) {
@@ -768,7 +877,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     if (height.value > (profile.galaxyBest[galaxy.id] ?? 0)) {
       profile.galaxyBest[galaxy.id] = height.value;
       if (nextWasLocked && galaxyUnlocked(gi + 1)) {
-        _showToast('NEW GALAXY UNLOCKED: ${galaxies[gi + 1].name}');
+        _showToast('NEW GALAXY UNLOCKED: ${galaxyAt(gi + 1).name}');
       }
     }
     // Roguelite history: any past universe can be replayed by its seed.
@@ -840,6 +949,42 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     }
   }
 
+  /* ---------- space sky ---------- */
+  void _buildSky() {
+    _stars.clear();
+    _nebulae.clear();
+    _skyGalaxy = profile.galaxy;
+    _skyW = size.x;
+    _skyH = size.y;
+    final r = math.Random(galaxy.seedSalt + 1097);
+    // Three parallax depths of stars — the deepest barely move.
+    for (var layer = 0; layer < 3; layer++) {
+      final par = [0.06, 0.14, 0.28][layer];
+      final count = [70, 45, 25][layer];
+      for (var i = 0; i < count; i++) {
+        _stars.add(_Star(
+          r.nextDouble() * size.x,
+          r.nextDouble() * size.y,
+          0.6 + layer * 0.5 + r.nextDouble() * 0.9,
+          par,
+          r.nextDouble() * math.pi * 2,
+          r.nextDouble() < 0.15,
+        ));
+      }
+    }
+    // Soft nebula clouds in the galaxy's own colors.
+    for (var i = 0; i < 5; i++) {
+      _nebulae.add(_Nebula(
+        r.nextDouble() * size.x,
+        r.nextDouble() * size.y,
+        size.x * (0.3 + r.nextDouble() * 0.45),
+        0.04 + r.nextDouble() * 0.08,
+        (i.isEven ? galaxy.ring : galaxy.accent)
+            .withValues(alpha: 0.05 + r.nextDouble() * 0.05),
+      ));
+    }
+  }
+
   /* ---------- render ---------- */
   @override
   void render(Canvas canvas) {
@@ -856,6 +1001,32 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
           galaxy.bgBottom,
         ]),
     );
+
+    // Deep space: nebulae + twinkling parallax starfield (per-galaxy sky).
+    if (_skyGalaxy != profile.galaxy || _skyW != size.x || _skyH != size.y) {
+      _buildSky();
+    }
+    for (final n in _nebulae) {
+      final ny = (n.y - _camY * n.par) % (size.y + n.radius * 2) - n.radius;
+      canvas.drawCircle(
+        Offset(n.x, ny + n.radius * 0.5),
+        n.radius,
+        Paint()
+          ..shader = Gradient.radial(
+              Offset(n.x, ny + n.radius * 0.5), n.radius, [
+            n.color,
+            n.color.withValues(alpha: 0),
+          ]),
+      );
+    }
+    for (final s in _stars) {
+      var sy = (s.y - _camY * s.par) % size.y;
+      if (sy < 0) sy += size.y;
+      final tw = 0.55 + 0.45 * math.sin(_time * (1.2 + s.par * 4) + s.phase);
+      final c = s.tint ? galaxy.accent : const Color(0xFFEAF2FF);
+      canvas.drawCircle(Offset(s.x, sy), s.size,
+          Paint()..color = c.withValues(alpha: (0.25 + 0.5 * tw) * (0.5 + s.par)));
+    }
 
     canvas.save();
     canvas.translate(0, -_camY);
@@ -884,6 +1055,17 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
       if (r.center.y < _camY - 120 || r.center.y > _camY + size.y + 120) continue;
       canvas.drawCircle(r.center.toOffset(), r.radius, r.storm ? stormRing : ringPaint);
       canvas.drawCircle(r.center.toOffset(), 3, corePaint);
+      if (r.flash > 0) {
+        // Blink of the ring just left: a few quick pulses that swell and fade.
+        final blink = 0.5 + 0.5 * math.sin(r.flash * math.pi * 5);
+        canvas.drawCircle(
+            r.center.toOffset(),
+            r.radius + (1 - r.flash) * 6,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 2 + r.flash * 2.5
+              ..color = galaxy.accent.withValues(alpha: r.flash * blink * 0.9));
+      }
       if (r.index > 0 && r.index % 10 == 0) {
         _drawText(canvas, '${r.index}', r.center.x, r.center.y - r.radius - 18,
             Palette.text.withValues(alpha: 0.28), 13);

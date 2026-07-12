@@ -8,7 +8,7 @@ import 'services/storage.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final storage = await Storage.load();
-  final api = Api();
+  final api = Api(baseUrl: storage.serverUrl); // private server if configured
   api.init(); // fire-and-forget; game is fully offline-capable
   runApp(EchoOrbitApp(game: EchoOrbitGame(storage, api)));
 }
@@ -189,7 +189,8 @@ class HomeOverlay extends StatelessWidget {
       builder: (context, _, __) {
         final p = game.profile;
         return Panel(
-          child: Column(
+          child: SingleChildScrollView(
+              child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               ShaderMask(
@@ -253,18 +254,68 @@ class HomeOverlay extends StatelessWidget {
                     color: const Color(0xFFB388FF),
                     textColor: Colors.white,
                     onTap: () => _showPrestige(context)),
-              TextButton(
-                onPressed: () => _confirmReset(context),
-                child: const Text('Reset progress',
-                    style: TextStyle(
-                        color: Color(0x998E9BFF),
-                        fontSize: 11.5,
-                        decoration: TextDecoration.underline)),
-              ),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                TextButton(
+                  onPressed: () => _confirmReset(context),
+                  child: const Text('Reset progress',
+                      style: TextStyle(
+                          color: Color(0x998E9BFF),
+                          fontSize: 11.5,
+                          decoration: TextDecoration.underline)),
+                ),
+                TextButton(
+                  onPressed: () => _showServer(context),
+                  child: const Text('Private server',
+                      style: TextStyle(
+                          color: Color(0x998E9BFF),
+                          fontSize: 11.5,
+                          decoration: TextDecoration.underline)),
+                ),
+              ]),
             ],
-          ),
+          )),
         );
       },
+    );
+  }
+
+  void _showServer(BuildContext context) {
+    final ctl = TextEditingController(text: game.api.baseUrl);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF141B3C),
+        title: const Text('Private server',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.w900)),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text(
+              'Compete with friends on your own server: everyone enters the same URL and shares leaderboards, daily seeds and ghosts.',
+              style: TextStyle(fontSize: 12.5, color: Color(0xFFC7D2FF))),
+          const SizedBox(height: 10),
+          TextField(
+            controller: ctl,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+                hintText: 'http://my-server:8080', isDense: true),
+            style: const TextStyle(fontSize: 13.5),
+          ),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final ok = await game.setServer(ctl.text.trim());
+              game.toast.value = ok
+                  ? 'Connected to ${game.api.baseUrl}'
+                  : 'Server saved — unreachable right now (offline play continues)';
+            },
+            child: const Text('CONNECT'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -442,9 +493,9 @@ class _GalaxySelector extends StatelessWidget {
     final p = game.profile;
     final g = game.galaxy;
     final gi = p.galaxy;
-    final hasNext = gi + 1 < galaxies.length;
-    final nextLocked = hasNext && !game.galaxyUnlocked(gi + 1);
-    final next = hasNext ? galaxies[gi + 1] : null;
+    // Endless galaxy ladder — there is always a next one.
+    final nextLocked = !game.galaxyUnlocked(gi + 1);
+    final next = galaxyAt(gi + 1);
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Container(
@@ -474,16 +525,14 @@ class _GalaxySelector extends StatelessWidget {
                       const TextStyle(fontSize: 11, color: Color(0xFF8E9BFF))),
               if (nextLocked)
                 Text(
-                    '🔒 ${next!.name} — reach ▲${next.unlockHeight} here (${p.galaxyBest[g.id] ?? 0}/${next.unlockHeight})',
+                    '🔒 ${next.name} — reach ▲${next.unlockHeight} here (${p.galaxyBest[g.id] ?? 0}/${next.unlockHeight})',
                     style: const TextStyle(
                         fontSize: 10.5, color: Color(0xFFFFD166))),
             ]),
           ),
           IconButton(
             icon: const Icon(Icons.chevron_right, size: 26),
-            color: hasNext && !nextLocked
-                ? Colors.white
-                : const Color(0x338E9BFF),
+            color: !nextLocked ? Colors.white : const Color(0x338E9BFF),
             onPressed: () => game.selectGalaxy(gi + 1),
           ),
         ]),
@@ -598,8 +647,7 @@ class _UniversesSheetState extends State<UniversesSheet> {
                         style: const TextStyle(
                             color: Color(0xFF5DF2C8),
                             fontWeight: FontWeight.w800)),
-                    title: Text(
-                        '#${r.seed} · ${galaxies[r.galaxy.clamp(0, galaxies.length - 1)].name}',
+                    title: Text('#${r.seed} · ${galaxyAt(r.galaxy).name}',
                         style: const TextStyle(fontSize: 13)),
                     subtitle: Text(
                         '✦ ${r.dust} · ${r.perfects} perfect · ${_fmtDate(r.dateMs)}',
@@ -639,35 +687,37 @@ class _UpgradesSheetState extends State<UpgradesSheet> {
     final p = game.profile;
     return Padding(
       padding: const EdgeInsets.all(20),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
+      child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
         Text('Upgrades   ✦ ${p.dust}',
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
         const SizedBox(height: 6),
         for (final def in upgradeDefs)
-          ListTile(
-            dense: true,
-            title: Text('${def.name}  ·  Lv ${game.upgLevel(def.id)}',
-                style: const TextStyle(
-                    fontSize: 14, fontWeight: FontWeight.w700)),
-            subtitle: Text(def.desc,
-                style:
-                    const TextStyle(fontSize: 11.5, color: Color(0xFF8E9BFF))),
-            trailing: FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFFFD166),
-                foregroundColor: const Color(0xFF3A2A00),
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+          Builder(builder: (_) {
+            final lvl = game.upgLevel(def.id);
+            return ListTile(
+              dense: true,
+              title: Text('${def.name}  ·  Lv $lvl',
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w700)),
+              subtitle: Text(
+                  '${def.desc}\n${game.upgValue(def.id, lvl)} → ${game.upgValue(def.id, lvl + 1)}',
+                  style: const TextStyle(
+                      fontSize: 11.5, color: Color(0xFF8E9BFF))),
+              trailing: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFFFD166),
+                  foregroundColor: const Color(0xFF3A2A00),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+                onPressed: p.dust < def.cost(lvl)
+                    ? null
+                    : () => setState(() => game.buyUpgrade(def)),
+                child: Text('✦ ${def.cost(lvl)}'),
               ),
-              onPressed: game.upgLevel(def.id) >= def.max ||
-                      p.dust < def.cost(game.upgLevel(def.id))
-                  ? null
-                  : () => setState(() => game.buyUpgrade(def)),
-              child: Text(game.upgLevel(def.id) >= def.max
-                  ? 'MAX'
-                  : '✦ ${def.cost(game.upgLevel(def.id))}'),
-            ),
-          ),
-      ]),
+            );
+          }),
+      ])),
     );
   }
 }
