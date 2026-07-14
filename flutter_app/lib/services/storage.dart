@@ -71,6 +71,10 @@ class SaveData {
   List<bool> dailyClaimed = [false, false, false];
   int galaxy = 0; // currently selected galaxy
   Map<String, int> galaxyBest = {}; // galaxy id -> best height (drives unlocks)
+  int playSeconds = 0; // lifetime seconds spent in runs — wear it proudly
+  List<String> skinsOwned = []; // market: purchased skin ids
+  String skin = ''; // market: equipped skin id ('' = prestige tier color)
+  int rankSeen = 0; // highest career rank celebrated (rank-up toasts)
 
   double get globalMult => 1 + photons * 0.10;
 
@@ -89,6 +93,10 @@ class SaveData {
         'dailyClaimed': dailyClaimed,
         'galaxy': galaxy,
         'gBest': galaxyBest,
+        'playSeconds': playSeconds,
+        'skins': skinsOwned,
+        'skin': skin,
+        'rankSeen': rankSeen,
       };
 
   void loadJson(Map<String, dynamic> j) {
@@ -110,6 +118,10 @@ class SaveData {
     dailyClaimed = List<bool>.from(j['dailyClaimed'] ?? [false, false, false]);
     galaxy = j['galaxy'] ?? 0;
     galaxyBest = Map<String, int>.from(j['gBest'] ?? {});
+    playSeconds = j['playSeconds'] ?? 0;
+    skinsOwned = List<String>.from(j['skins'] ?? []);
+    skin = j['skin'] ?? '';
+    rankSeen = j['rankSeen'] ?? 0;
   }
 }
 
@@ -132,6 +144,37 @@ class Storage {
   }
 
   void save() => _prefs.setString(_key, jsonEncode(data.toJson()));
+
+  /// Chosen pilot name — shown on leaderboards, ghosts and live multiplayer.
+  String? get playerName => _prefs.getString('playerName');
+  void setPlayerName(String? name) {
+    if (name == null || name.isEmpty) {
+      _prefs.remove('playerName');
+    } else {
+      _prefs.setString('playerName', name);
+    }
+  }
+
+  /// Stable anonymous identity, one per server — without it every launch
+  /// would create a brand-new player on the leaderboards.
+  (String, String)? getAuth(String server) {
+    final raw = _prefs.getString('auth:$server');
+    if (raw == null) return null;
+    final i = raw.indexOf('|');
+    if (i <= 0) return null;
+    return (raw.substring(0, i), raw.substring(i + 1)); // (uid, token)
+  }
+
+  void setAuth(String server, String uid, String token) =>
+      _prefs.setString('auth:$server', '$uid|$token');
+
+  void clearAuth(String server) => _prefs.remove('auth:$server');
+
+  /// True once the pilot has REGISTERED (name+password) on this server —
+  /// a locally chosen guest name is not enough to pass the login gate.
+  bool isRegistered(String server) => _prefs.getBool('acct:$server') ?? false;
+  void setRegistered(String server, bool v) =>
+      v ? _prefs.setBool('acct:$server', true) : _prefs.remove('acct:$server');
 
   /// Private server override (compete with friends on any hosted backend).
   String? get serverUrl => _prefs.getString('serverUrl');

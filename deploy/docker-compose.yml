@@ -1,0 +1,30 @@
+# Server-side compose (lives at /opt/echo-orbit on the VPS).
+# The backend is NOT exposed on the host — nginx proxies to it on the
+# docker network, so it cannot clash with other services (e.g. ipfs on 8080).
+services:
+  backend:
+    build: ./server
+    container_name: echo-orbit-backend
+    volumes:
+      - ./server/data:/app/data # leaderboards & saves survive restarts
+    environment:
+      # Force-update gate. On a BREAKING release: bump LATEST_BUILD, set
+      # MIN_BUILD to the same number, `docker compose up -d backend` — every
+      # older APK locks into the in-game update screen. For a non-breaking
+      # release bump only LATEST_BUILD (players get a soft hint instead).
+      MIN_BUILD: "0"
+      LATEST_BUILD: "2"
+      APK_URL: "http://217.216.32.99/echo-orbit.apk"
+    restart: unless-stopped
+
+  web:
+    image: nginx:alpine
+    container_name: echo-orbit-web
+    ports:
+      - "80:80"
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+    restart: unless-stopped

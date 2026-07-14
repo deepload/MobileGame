@@ -1,5 +1,6 @@
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'game/echo_orbit_game.dart';
 import 'services/api.dart';
@@ -8,7 +9,16 @@ import 'services/storage.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final storage = await Storage.load();
-  final api = Api(baseUrl: storage.serverUrl); // private server if configured
+  // Self-heal: an old build defaulted to localhost — a private-server URL
+  // saved back then would silently override the real master server forever.
+  final saved = storage.serverUrl;
+  if (saved != null &&
+      (saved.contains('localhost') || saved.contains('127.0.0.1')) &&
+      !Api.defaultUrl.contains('localhost')) {
+    storage.setServerUrl(null);
+  }
+  final api = Api(baseUrl: storage.serverUrl, storage: storage);
+  api.displayName = storage.playerName; // pilot name, pushed after auth
   api.init(); // fire-and-forget; game is fully offline-capable
   runApp(EchoOrbitApp(game: EchoOrbitGame(storage, api)));
 }
@@ -80,7 +90,10 @@ class _GameScreenState extends State<GameScreen> {
           valueListenable: game.state,
           builder: (_, state, __) => switch (state) {
             RunState.home => HomeOverlay(game: game),
-            RunState.running => RunHud(game: game),
+            RunState.running => Stack(children: [
+                RunHud(game: game),
+                SigilOfferOverlay(game: game),
+              ]),
             RunState.over => ResultsOverlay(game: game),
           },
         ),
@@ -176,6 +189,55 @@ class StatRow extends StatelessWidget {
   }
 }
 
+/* ---------------- FORCE UPDATE GATE ---------------- */
+
+/// Shown instead of the home panel when the server says this build is too
+/// old to play online (breaking change). No bypass — that's the point.
+/// It can only appear while a server answers; with no connection the game
+/// stays fully playable offline.
+class UpdateGate extends StatelessWidget {
+  const UpdateGate({super.key, required this.game});
+  final EchoOrbitGame game;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = game.api.updateUrl;
+    return Panel(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('🛰️', style: TextStyle(fontSize: 40)),
+          const SizedBox(height: 6),
+          const Text('UPDATE REQUIRED',
+              style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 2,
+                  color: Color(0xFFFFD166))),
+          const SizedBox(height: 8),
+          const Text(
+            'The universe has changed in ways this build (v${Api.appBuild}) '
+            'cannot fly. Download the new APK, install it over this one — '
+            'your progress is kept — and come back stronger.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFFC7D2FF), fontSize: 13),
+          ),
+          if (url.isNotEmpty)
+            BigButton('DOWNLOAD UPDATE',
+                onTap: () => launchUrl(Uri.parse(url),
+                    mode: LaunchMode.externalApplication))
+          else
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Text('Ask your pilot friend for the new APK.',
+                  style: TextStyle(color: Color(0xFF8E9BFF), fontSize: 12)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /* ---------------- HOME ---------------- */
 
 class HomeOverlay extends StatelessWidget {
@@ -187,6 +249,9 @@ class HomeOverlay extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: game.profileVersion,
       builder: (context, _, __) {
+        // Force update: the server refuses this build (breaking change).
+        // Only ever shown while a server answers — offline play stays free.
+        if (game.api.updateRequired) return UpdateGate(game: game);
         final p = game.profile;
         return Panel(
           child: SingleChildScrollView(
@@ -209,7 +274,73 @@ class HomeOverlay extends StatelessWidget {
               const Text('Tap to leap orbit to orbit.\nYour best runs fly with you.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Color(0xFF8E9BFF), fontSize: 13)),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
+              // Pilot name — who you are on leaderboards & live multiplayer.
+              InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => _editName(context),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  child: Text(
+                    game.hasCustomName || game.playerName.isNotEmpty
+                        ? '★ ${game.playerName}   ✎'
+                        : '★ Pilot login   ✎',
+                    style: TextStyle(
+                        color: game.hasCustomName
+                            ? const Color(0xFFFFD166)
+                            : const Color(0xFF8E9BFF),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13.5),
+                  ),
+                ),
+              ),
+              // Server status — master vs private, live connected dot.
+              InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => _showServer(context),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                  child: Text(
+                    game.api.online
+                        ? (game.api.isMaster
+                            ? '● Master server connected'
+                            : '● Private: ${_shortUrl(game.api.baseUrl)}')
+                        : (game.api.isMaster
+                            ? '● Master server offline'
+                            : '● ${_shortUrl(game.api.baseUrl)} offline'),
+                    style: TextStyle(
+                        color: game.api.online
+                            ? const Color(0xFF5DF2C8)
+                            : const Color(0xFFE36588),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11),
+                  ),
+                ),
+              ),
+              // Soft update hint: a newer APK exists but this one still flies.
+              if (game.api.updateAvailable && !game.api.updateRequired)
+                InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => launchUrl(Uri.parse(game.api.updateUrl),
+                      mode: LaunchMode.externalApplication),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                    child: Text('● Update available — tap to download',
+                        style: TextStyle(
+                            color: Color(0xFFFFD166),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 11)),
+                  ),
+                ),
+              const SizedBox(height: 4),
+              // Career rank — the tryhard ladder (Champions math, lifetime).
+              StatRow('Pilot rank',
+                  '${rankName(game.rankIndex)} · ${game.careerPoints()} pts',
+                  valueColor: rankColor(game.rankIndex)),
+              StatRow('Next rank at', '${game.nextRankAt()} pts',
+                  valueColor: const Color(0xFF8E9BFF)),
               StatRow('Best height', '${p.bestHeight}'),
               StatRow('Stardust', '${p.dust}',
                   valueColor: const Color(0xFFFFD166)),
@@ -220,8 +351,33 @@ class HomeOverlay extends StatelessWidget {
               StatRow('Echoes equipped',
                   '${p.echoes.length.clamp(0, game.echoSlots)} / ${game.echoSlots}',
                   valueColor: const Color(0xFF5DF2C8)),
+              StatRow('Time played', _fmtPlayTime(p.playSeconds),
+                  valueColor: const Color(0xFF8E9BFF)),
               _GalaxySelector(game: game),
-              BigButton('PLAY', onTap: game.startRun),
+              // Alpha: online play needs a REGISTERED pilot (name+password).
+              // Offline, a local guest name is enough — offline-first.
+              BigButton('PLAY', onTap: () {
+                final api = game.api;
+                final canFly = api.registered ||
+                    (!api.online && game.hasCustomName);
+                if (canFly) {
+                  game.startRun();
+                } else {
+                  game.toast.value = 'Log in first, pilot!';
+                  _editName(context);
+                }
+              }),
+              BigButton(game.marketUnlocked ? 'MARKET' : 'MARKET 🔒',
+                  color: const Color(0xFFFFD166),
+                  textColor: const Color(0xFF3A2A00),
+                  onTap: () {
+                    if (game.marketUnlocked) {
+                      _showMarket(context);
+                    } else {
+                      game.toast.value =
+                          'Finish your first run to open the Market';
+                    }
+                  }),
               Row(children: [
                 Expanded(
                     child: BigButton('Upgrades',
@@ -279,19 +435,87 @@ class HomeOverlay extends StatelessWidget {
     );
   }
 
-  void _showServer(BuildContext context) {
-    final ctl = TextEditingController(text: game.api.baseUrl);
+  void _editName(BuildContext context) {
+    final nameCtl = TextEditingController(
+        text: game.hasCustomName ? game.playerName : '');
+    final passCtl = TextEditingController();
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF141B3C),
-        title: const Text('Private server',
+        title: const Text('Pilot login',
             textAlign: TextAlign.center,
             style: TextStyle(fontWeight: FontWeight.w900)),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           const Text(
-              'Compete with friends on your own server: everyone enters the same URL and shares leaderboards, daily seeds and ghosts.',
+              'First time? This registers your pilot. Coming back (or on a new device)? Enter the same name and password.',
               style: TextStyle(fontSize: 12.5, color: Color(0xFFC7D2FF))),
+          const SizedBox(height: 10),
+          TextField(
+            controller: nameCtl,
+            maxLength: 16,
+            autofocus: !game.hasCustomName,
+            decoration: const InputDecoration(
+                labelText: 'Pilot name',
+                hintText: 'e.g. NovaHunter',
+                isDense: true,
+                counterText: ''),
+            style: const TextStyle(fontSize: 14),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: passCtl,
+            obscureText: true,
+            autofocus: game.hasCustomName,
+            decoration: const InputDecoration(
+                labelText: 'Password', isDense: true),
+            style: const TextStyle(fontSize: 14),
+            onSubmitted: (_) {
+              Navigator.pop(ctx);
+              game.login(nameCtl.text, passCtl.text);
+            },
+          ),
+          const Text('Letters, numbers, - _ and spaces · max 16',
+              style: TextStyle(fontSize: 10.5, color: Color(0xFF8E9BFF))),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              game.login(nameCtl.text, passCtl.text);
+            },
+            child: const Text('ENTER'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Strip the scheme for compact display ('http://1.2.3.4' -> '1.2.3.4').
+  static String _shortUrl(String url) =>
+      url.replaceFirst(RegExp(r'^https?://'), '');
+
+  void _showServer(BuildContext context) {
+    // Prefill only a real private override — never the master URL, so it
+    // can't be accidentally saved as a "private server".
+    final ctl =
+        TextEditingController(text: game.api.isMaster ? '' : game.api.baseUrl);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF141B3C),
+        title: const Text('Game server',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.w900)),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(
+              'Now playing on: ${_shortUrl(game.api.baseUrl)}'
+              '${game.api.isMaster ? ' (master)' : ' (private)'}\n\n'
+              'Compete with friends on your own server: everyone enters the same URL and shares leaderboards, daily seeds and ghosts.',
+              style:
+                  const TextStyle(fontSize: 12.5, color: Color(0xFFC7D2FF))),
           const SizedBox(height: 10),
           TextField(
             controller: ctl,
@@ -304,6 +528,16 @@ class HomeOverlay extends StatelessWidget {
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final ok = await game.setServer('');
+              game.toast.value = ok
+                  ? 'Back on the master server'
+                  : 'Master server saved — unreachable right now';
+            },
+            child: const Text('MASTER SERVER'),
+          ),
           FilledButton(
             onPressed: () async {
               Navigator.pop(ctx);
@@ -355,6 +589,26 @@ class HomeOverlay extends StatelessWidget {
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => UniversesSheet(game: game),
+    );
+  }
+
+  /// "Proud of playing a lot" — lifetime time spent flying.
+  String _fmtPlayTime(int s) {
+    final h = s ~/ 3600;
+    final m = (s % 3600) ~/ 60;
+    if (h > 0) return '${h}h ${m}m';
+    if (m > 0) return '${m}m ${s % 60}s';
+    return '${s}s';
+  }
+
+  void _showMarket(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xF20B1026),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => MarketSheet(game: game),
     );
   }
 
@@ -442,42 +696,213 @@ class HomeOverlay extends StatelessWidget {
   void _showLeaderboard(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: const Color(0xF20B1026),
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => FutureBuilder(
-        future: game.api.fetchLeaderboard(),
-        builder: (context, snap) => Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Text('Weekly leaderboard',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 10),
-            if (!snap.hasData)
-              const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: CircularProgressIndicator())
-            else if (snap.data!.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(20),
-                child: Text('Offline — leaderboard syncs when connected.',
-                    style: TextStyle(color: Color(0xFF8E9BFF))),
-              )
-            else
-              for (final (i, e) in snap.data!.indexed)
-                ListTile(
-                  dense: true,
-                  leading: Text('${i + 1}',
-                      style: const TextStyle(
-                          color: Color(0xFFFFD166),
-                          fontWeight: FontWeight.w800)),
-                  title: Text(e.name),
-                  trailing: Text('▲ ${e.height}',
-                      style: const TextStyle(fontWeight: FontWeight.w700)),
-                ),
-          ]),
-        ),
+      builder: (_) => LeaderboardSheet(game: game),
+    );
+  }
+}
+
+/* ---------------- WEEKLY LEADERBOARD (champions + per-galaxy) ------------ */
+
+class LeaderboardSheet extends StatefulWidget {
+  const LeaderboardSheet({super.key, required this.game});
+  final EchoOrbitGame game;
+
+  @override
+  State<LeaderboardSheet> createState() => _LeaderboardSheetState();
+}
+
+class _LeaderboardSheetState extends State<LeaderboardSheet> {
+  /// -1 = CHAMPIONS (all galaxies, difficulty-weighted); >=0 = that galaxy.
+  int _tab = -1;
+  Future<List<ChampionEntry>?>? _champions;
+  final Map<int, Future<List<LeaderboardEntry>?>> _boards = {};
+
+  EchoOrbitGame get game => widget.game;
+
+  @override
+  void initState() {
+    super.initState();
+    _champions = game.api.fetchChampions();
+  }
+
+  /// Galaxies worth a tab: every unlocked one (the endless ladder stops at
+  /// the first locked galaxy), the selected one always included.
+  List<int> _galaxyTabs() {
+    final tabs = <int>[];
+    for (var i = 0; i < 30 && game.galaxyUnlocked(i); i++) {
+      tabs.add(i);
+    }
+    if (!tabs.contains(game.profile.galaxy)) tabs.add(game.profile.galaxy);
+    return tabs;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: MediaQuery.of(context).size.height * 0.72,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
+        child: Column(children: [
+          const Text('Weekly leaderboard',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
+          // Galaxy tabs — champions first, then one board per galaxy.
+          SizedBox(
+            height: 34,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _chip(-1, 'CHAMPIONS ★', const Color(0xFFFFD166)),
+                for (final g in _galaxyTabs())
+                  _chip(g, galaxyAt(g).name, galaxyAt(g).ring),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          if (_tab == -1)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6),
+              child: Text(
+                'Height x galaxy difficulty (x10) + 5 per perfect orbit, '
+                'summed over every galaxy flown this week.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 10.5, color: Color(0xFF8E9BFF)),
+              ),
+            )
+          else
+            Text(
+              '${galaxyAt(_tab).name} — difficulty x${galaxyAt(_tab).difficulty.toStringAsFixed(2)}',
+              style: const TextStyle(fontSize: 10.5, color: Color(0xFF8E9BFF)),
+            ),
+          const SizedBox(height: 4),
+          Expanded(child: _tab == -1 ? _championList() : _galaxyList(_tab)),
+        ]),
       ),
+    );
+  }
+
+  Widget _chip(int tab, String label, Color color) {
+    final sel = _tab == tab;
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: ChoiceChip(
+        label: Text(label,
+            style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: sel ? const Color(0xFF0B1026) : color)),
+        selected: sel,
+        selectedColor: color,
+        backgroundColor: const Color(0x148E9BFF),
+        side: BorderSide(color: color.withValues(alpha: 0.4)),
+        showCheckmark: false,
+        onSelected: (_) => setState(() {
+          _tab = tab;
+          if (tab >= 0) {
+            _boards[tab] ??= game.api.fetchLeaderboard(tab);
+          }
+        }),
+      ),
+    );
+  }
+
+  Widget _empty(String msg) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Text(msg,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFF8E9BFF))),
+      );
+
+  /// Pilot name + career rank tag (+ prestige stars) — every board row
+  /// shows WHO you are on the ladder, not just a number.
+  Widget _rankedName(String name, int prestige, int rank) => Text.rich(
+        TextSpan(children: [
+          TextSpan(text: name),
+          if (prestige > 0)
+            TextSpan(
+                text: '  ✦$prestige',
+                style: const TextStyle(color: Color(0xFFB388FF))),
+          TextSpan(
+              text: '  ${rankName(rank)}',
+              style: TextStyle(
+                  color: rankColor(rank),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1)),
+        ]),
+        style: const TextStyle(fontSize: 14),
+      );
+
+  Widget _championList() {
+    return FutureBuilder(
+      future: _champions,
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final data = snap.data;
+        if (data == null) {
+          return _empty('Offline — leaderboard syncs when connected.');
+        }
+        if (data.isEmpty) {
+          return _empty(
+              'No champions yet this week — finish a run and be the first!');
+        }
+        return ListView(children: [
+          for (final (i, e) in data.indexed)
+            ListTile(
+              dense: true,
+              leading: Text('${i + 1}',
+                  style: const TextStyle(
+                      color: Color(0xFFFFD166), fontWeight: FontWeight.w800)),
+              title: _rankedName(e.name, e.prestige, e.rank),
+              subtitle: Text(
+                  '▲${e.height} · ${e.galaxies} ${e.galaxies == 1 ? 'galaxy' : 'galaxies'}'
+                  ' (top: ${e.galaxyName.isNotEmpty ? e.galaxyName : galaxyAt(e.galaxy).name})'
+                  ' · ★${e.perfects}',
+                  style: const TextStyle(
+                      fontSize: 10.5, color: Color(0xFF8E9BFF))),
+              trailing: Text('${e.score} pts',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800, color: Color(0xFFFFD166))),
+            ),
+        ]);
+      },
+    );
+  }
+
+  Widget _galaxyList(int g) {
+    return FutureBuilder(
+      future: _boards[g] ??= game.api.fetchLeaderboard(g),
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final data = snap.data;
+        if (data == null) {
+          return _empty('Offline — leaderboard syncs when connected.');
+        }
+        if (data.isEmpty) {
+          return _empty(
+              'No scores in ${galaxyAt(g).name} this week — be the first!');
+        }
+        return ListView(children: [
+          for (final (i, e) in data.indexed)
+            ListTile(
+              dense: true,
+              leading: Text('${i + 1}',
+                  style: const TextStyle(
+                      color: Color(0xFFFFD166), fontWeight: FontWeight.w800)),
+              title: _rankedName(e.name, e.prestige, e.rank),
+              trailing: Text('▲ ${e.height}',
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+            ),
+        ]);
+      },
     );
   }
 }
@@ -513,6 +938,18 @@ class _GalaxySelector extends StatelessWidget {
           ),
           Expanded(
             child: Column(children: [
+              if (universeOf(gi) > 1 || isLightGate(gi))
+                Text(
+                    isLightGate(gi)
+                        ? 'UNIVERSE ${universeOf(gi)} — THE END OF THE STORY'
+                        : 'UNIVERSE ${universeOf(gi)}',
+                    style: TextStyle(
+                        color: isLightGate(gi)
+                            ? const Color(0xFFFFF3C4)
+                            : const Color(0xFF8E9BFF),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 9.5,
+                        letterSpacing: 2)),
               Text(g.name,
                   style: TextStyle(
                       color: g.accent,
@@ -523,6 +960,11 @@ class _GalaxySelector extends StatelessWidget {
                   'difficulty x${g.difficulty.toStringAsFixed(1)} · rewards x${g.reward.toStringAsFixed(1)} · best ▲${p.galaxyBest[g.id] ?? 0}',
                   style:
                       const TextStyle(fontSize: 11, color: Color(0xFF8E9BFF))),
+              if (mutationAt(gi) != null)
+                Text(
+                    '☄ ${mutationAt(gi)!.name} — ${mutationAt(gi)!.up} / ${mutationAt(gi)!.down}',
+                    style: const TextStyle(
+                        fontSize: 10, color: Color(0xFFB388FF))),
               if (nextLocked)
                 Text(
                     '🔒 ${next.name} — reach ▲${next.unlockHeight} here (${p.galaxyBest[g.id] ?? 0}/${next.unlockHeight})',
@@ -722,6 +1164,121 @@ class _UpgradesSheetState extends State<UpgradesSheet> {
   }
 }
 
+/* ---------------- MARKET (cosmetics — pure style) ---------------- */
+
+class MarketSheet extends StatefulWidget {
+  const MarketSheet({super.key, required this.game});
+  final EchoOrbitGame game;
+
+  @override
+  State<MarketSheet> createState() => _MarketSheetState();
+}
+
+class _MarketSheetState extends State<MarketSheet> {
+  Widget _swatch(Color c) => Container(
+        width: 26,
+        height: 26,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: c,
+          boxShadow: [BoxShadow(color: c.withValues(alpha: 0.6), blurRadius: 8)],
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 10,
+            height: 10,
+            child: DecoratedBox(
+              decoration:
+                  BoxDecoration(shape: BoxShape.circle, color: Colors.white),
+            ),
+          ),
+        ),
+      );
+
+  Widget _equippedChip() => const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 10),
+        child: Text('EQUIPPED',
+            style: TextStyle(
+                color: Color(0xFF5DF2C8),
+                fontSize: 11,
+                fontWeight: FontWeight.w800)),
+      );
+
+  Widget _equipButton(String id) => OutlinedButton(
+        style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.white,
+            side: const BorderSide(color: Color(0x668E9BFF)),
+            padding: const EdgeInsets.symmetric(horizontal: 12)),
+        onPressed: () => setState(() => widget.game.equipSkin(id)),
+        child: const Text('Equip'),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final game = widget.game;
+    final p = game.profile;
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Text('MARKET',
+            style: TextStyle(
+                fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: 2)),
+        const SizedBox(height: 2),
+        Text('✦ ${p.dust} stardust   ·   ${p.photons} photons',
+            style: const TextStyle(fontSize: 12.5, color: Color(0xFFFFD166))),
+        const SizedBox(height: 2),
+        const Text('Star skins recolor you and your comet trail.\nPure style — zero pay-to-win.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFF8E9BFF), fontSize: 11.5)),
+        const SizedBox(height: 6),
+        // Default look: the prestige tier color.
+        ListTile(
+          dense: true,
+          leading: _swatch(game.tierColor()),
+          title: const Text('Prestige tier',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+          subtitle: const Text('Your star\'s natural color — grows with Supernovas',
+              style: TextStyle(fontSize: 11.5, color: Color(0xFF8E9BFF))),
+          trailing: p.skin.isEmpty ? _equippedChip() : _equipButton(''),
+        ),
+        for (final def in skinDefs)
+          ListTile(
+            dense: true,
+            leading: _swatch(def.color),
+            title: Text(def.name,
+                style:
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+            subtitle: Text(def.desc,
+                style:
+                    const TextStyle(fontSize: 11.5, color: Color(0xFF8E9BFF))),
+            trailing: game.ownsSkin(def.id)
+                ? (p.skin == def.id ? _equippedChip() : _equipButton(def.id))
+                : FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: def.premium
+                          ? const Color(0xFFB388FF)
+                          : const Color(0xFFFFD166),
+                      foregroundColor: def.premium
+                          ? Colors.white
+                          : const Color(0xFF3A2A00),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                    onPressed: (def.premium
+                            ? p.photons < def.cost
+                            : p.dust < def.cost)
+                        ? null
+                        : () => setState(() => game.buySkin(def)),
+                    child: Text(def.premium
+                        ? '${def.cost} photons'
+                        : '✦ ${def.cost}'),
+                  ),
+          ),
+      ])),
+    );
+  }
+}
+
 /* ---------------- RUN HUD ---------------- */
 
 class RunHud extends StatelessWidget {
@@ -769,6 +1326,38 @@ class RunHud extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                     color: Color(0xFFFF7E6B))),
           ),
+          // Active sigils — the run's build, always visible.
+          ValueListenableBuilder<int>(
+            valueListenable: game.sigilVersion,
+            builder: (_, __, ___) => game.sigils.isEmpty
+                ? const SizedBox.shrink()
+                : Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Wrap(
+                      spacing: 6,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        for (final s in game.sigils)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0x66231A3F),
+                              borderRadius: BorderRadius.circular(999),
+                              border:
+                                  Border.all(color: const Color(0x66B388FF)),
+                            ),
+                            child: Text(s.name,
+                                style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 1,
+                                    color: Color(0xFFB388FF))),
+                          ),
+                      ],
+                    ),
+                  ),
+          ),
         ]),
       ),
     );
@@ -783,6 +1372,106 @@ class RunHud extends StatelessWidget {
         ),
         child: child,
       );
+}
+
+/* ---------------- SIGIL OFFER ---------------- */
+
+/// Balatro-style pick-1-of-3: same seed = same cards for every racer.
+/// The star keeps orbiting while you decide — choosing is always safe.
+class SigilOfferOverlay extends StatelessWidget {
+  const SigilOfferOverlay({super.key, required this.game});
+  final EchoOrbitGame game;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<SigilDef>?>(
+      valueListenable: game.sigilOffer,
+      builder: (_, offer, __) {
+        if (offer == null) return const SizedBox.shrink();
+        return Align(
+          alignment: Alignment.bottomCenter,
+          child: SafeArea(
+            child: Container(
+              margin: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xEE0B1026),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0x66B388FF)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('CHOOSE A SIGIL',
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 3,
+                          color: Color(0xFFB388FF))),
+                  const SizedBox(height: 2),
+                  const Text('Every gift has a price · same seed, same choices',
+                      style:
+                          TextStyle(fontSize: 10, color: Color(0xFF8E9BFF))),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      for (final s in offer)
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => game.pickSigil(s),
+                            child: Container(
+                              margin:
+                                  const EdgeInsets.symmetric(horizontal: 3),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: const Color(0x44231A3F),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                    color: const Color(0x88B388FF)),
+                              ),
+                              child: Column(
+                                children: [
+                                  Text(s.name,
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: 1,
+                                          color: Color(0xFFB388FF))),
+                                  const SizedBox(height: 6),
+                                  Text('▲ ${s.up}',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                          fontSize: 10,
+                                          color: Color(0xFF5DF2C8))),
+                                  const SizedBox(height: 4),
+                                  Text('▼ ${s.down}',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                          fontSize: 10,
+                                          color: Color(0xFFFF7E6B))),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  TextButton(
+                    onPressed: () => game.pickSigil(null),
+                    child: const Text('PASS — fly pure',
+                        style: TextStyle(
+                            fontSize: 11, color: Color(0xFF8E9BFF))),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
 /* ---------------- RESULTS ---------------- */
