@@ -83,6 +83,10 @@ struct LbEntry {
     /// Human-readable galaxy name as the client shows it (e.g. "EMBER NEBULA").
     #[serde(default)]
     gname: String,
+    /// Career rank index computed client-side (same math as champion points
+    /// over lifetime bests) — display-only, never affects scoring.
+    #[serde(default)]
+    rank: u32,
     ts: u64,
 }
 
@@ -317,7 +321,7 @@ async fn save_put(
     let Some(uid) = auth_uid(&app, &headers) else {
         return (StatusCode::UNAUTHORIZED, Json(json!({"error":"auth"})));
     };
-    const MONOTONIC: [&str; 7] = [
+    const MONOTONIC: [&str; 8] = [
         "photons",
         "prestige",
         "bestHeight",
@@ -325,6 +329,7 @@ async fn save_put(
         "totalRuns",
         "dust",
         "playSeconds",
+        "rankSeen",
     ];
     if let Ok(mut store) = app.store.write() {
         let merged = match store.saves.get(&uid) {
@@ -373,6 +378,8 @@ struct ScoreSubmit {
     galaxy: u32,
     #[serde(default)]
     gname: String,
+    #[serde(default)]
+    rank: u32,
 }
 
 /// Leaderboard submit with sanity anti-cheat (docs/04): implausible values
@@ -416,10 +423,12 @@ async fn lb_submit(
                 prestige: 0,
                 galaxy: s.galaxy,
                 gname: String::new(),
+                rank: 0,
                 ts: 0,
             });
         entry.name = name; // renames ripple through on the next submit
         entry.prestige = s.prestige;
+        entry.rank = entry.rank.max(s.rank.min(50)); // ranks only climb
         entry.gname = s.gname.chars().take(24).collect();
         if s.height > entry.height {
             entry.height = s.height;
@@ -472,6 +481,7 @@ async fn lb_top(
         galaxies: u32,
         perfects: u32,
         prestige: u32,
+        rank: u32,
         ts: u64,
     }
     // Best entry per (pilot NAME, galaxy) first — duplicate uids of the same
@@ -499,12 +509,14 @@ async fn lb_top(
                 galaxies: 0,
                 perfects: 0,
                 prestige: 0,
+                rank: 0,
                 ts: 0,
             });
             a.score += champion_points(&e);
             a.galaxies += 1;
             a.perfects += e.perfects;
             a.prestige = a.prestige.max(e.prestige);
+            a.rank = a.rank.max(e.rank);
             a.ts = a.ts.max(e.ts);
             if e.galaxy >= a.galaxy {
                 a.galaxy = e.galaxy; // deepest galaxy reached
@@ -527,7 +539,7 @@ async fn lb_top(
             json!({
                 "name": a.name, "score": a.score, "height": a.height,
                 "galaxy": a.galaxy, "gname": a.gname, "galaxies": a.galaxies,
-                "perfects": a.perfects, "prestige": a.prestige,
+                "perfects": a.perfects, "prestige": a.prestige, "rank": a.rank,
             })
         })
         .collect();

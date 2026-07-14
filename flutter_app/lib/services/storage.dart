@@ -74,6 +74,7 @@ class SaveData {
   int playSeconds = 0; // lifetime seconds spent in runs — wear it proudly
   List<String> skinsOwned = []; // market: purchased skin ids
   String skin = ''; // market: equipped skin id ('' = prestige tier color)
+  int rankSeen = 0; // highest career rank celebrated (rank-up toasts)
 
   double get globalMult => 1 + photons * 0.10;
 
@@ -95,6 +96,7 @@ class SaveData {
         'playSeconds': playSeconds,
         'skins': skinsOwned,
         'skin': skin,
+        'rankSeen': rankSeen,
       };
 
   void loadJson(Map<String, dynamic> j) {
@@ -119,6 +121,7 @@ class SaveData {
     playSeconds = j['playSeconds'] ?? 0;
     skinsOwned = List<String>.from(j['skins'] ?? []);
     skin = j['skin'] ?? '';
+    rankSeen = j['rankSeen'] ?? 0;
   }
 }
 

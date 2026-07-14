@@ -89,7 +89,10 @@ class _GameScreenState extends State<GameScreen> {
           valueListenable: game.state,
           builder: (_, state, __) => switch (state) {
             RunState.home => HomeOverlay(game: game),
-            RunState.running => RunHud(game: game),
+            RunState.running => Stack(children: [
+                RunHud(game: game),
+                SigilOfferOverlay(game: game),
+              ]),
             RunState.over => ResultsOverlay(game: game),
           },
         ),
@@ -264,6 +267,12 @@ class HomeOverlay extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 4),
+              // Career rank — the tryhard ladder (Champions math, lifetime).
+              StatRow('Pilot rank',
+                  '${rankName(game.rankIndex)} · ${game.careerPoints()} pts',
+                  valueColor: rankColor(game.rankIndex)),
+              StatRow('Next rank at', '${game.nextRankAt()} pts',
+                  valueColor: const Color(0xFF8E9BFF)),
               StatRow('Best height', '${p.bestHeight}'),
               StatRow('Stardust', '${p.dust}',
                   valueColor: const Color(0xFFFFD166)),
@@ -740,6 +749,26 @@ class _LeaderboardSheetState extends State<LeaderboardSheet> {
             style: const TextStyle(color: Color(0xFF8E9BFF))),
       );
 
+  /// Pilot name + career rank tag (+ prestige stars) — every board row
+  /// shows WHO you are on the ladder, not just a number.
+  Widget _rankedName(String name, int prestige, int rank) => Text.rich(
+        TextSpan(children: [
+          TextSpan(text: name),
+          if (prestige > 0)
+            TextSpan(
+                text: '  ✦$prestige',
+                style: const TextStyle(color: Color(0xFFB388FF))),
+          TextSpan(
+              text: '  ${rankName(rank)}',
+              style: TextStyle(
+                  color: rankColor(rank),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1)),
+        ]),
+        style: const TextStyle(fontSize: 14),
+      );
+
   Widget _championList() {
     return FutureBuilder(
       future: _champions,
@@ -762,8 +791,7 @@ class _LeaderboardSheetState extends State<LeaderboardSheet> {
               leading: Text('${i + 1}',
                   style: const TextStyle(
                       color: Color(0xFFFFD166), fontWeight: FontWeight.w800)),
-              title: Text(
-                  '${e.name}${e.prestige > 0 ? '  ✦${e.prestige}' : ''}'),
+              title: _rankedName(e.name, e.prestige, e.rank),
               subtitle: Text(
                   '▲${e.height} · ${e.galaxies} ${e.galaxies == 1 ? 'galaxy' : 'galaxies'}'
                   ' (top: ${e.galaxyName.isNotEmpty ? e.galaxyName : galaxyAt(e.galaxy).name})'
@@ -801,8 +829,7 @@ class _LeaderboardSheetState extends State<LeaderboardSheet> {
               leading: Text('${i + 1}',
                   style: const TextStyle(
                       color: Color(0xFFFFD166), fontWeight: FontWeight.w800)),
-              title: Text(
-                  '${e.name}${e.prestige > 0 ? '  ✦${e.prestige}' : ''}'),
+              title: _rankedName(e.name, e.prestige, e.rank),
               trailing: Text('▲ ${e.height}',
                   style: const TextStyle(fontWeight: FontWeight.w700)),
             ),
@@ -843,6 +870,18 @@ class _GalaxySelector extends StatelessWidget {
           ),
           Expanded(
             child: Column(children: [
+              if (universeOf(gi) > 1 || isLightGate(gi))
+                Text(
+                    isLightGate(gi)
+                        ? 'UNIVERSE ${universeOf(gi)} — THE END OF THE STORY'
+                        : 'UNIVERSE ${universeOf(gi)}',
+                    style: TextStyle(
+                        color: isLightGate(gi)
+                            ? const Color(0xFFFFF3C4)
+                            : const Color(0xFF8E9BFF),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 9.5,
+                        letterSpacing: 2)),
               Text(g.name,
                   style: TextStyle(
                       color: g.accent,
@@ -853,6 +892,11 @@ class _GalaxySelector extends StatelessWidget {
                   'difficulty x${g.difficulty.toStringAsFixed(1)} · rewards x${g.reward.toStringAsFixed(1)} · best ▲${p.galaxyBest[g.id] ?? 0}',
                   style:
                       const TextStyle(fontSize: 11, color: Color(0xFF8E9BFF))),
+              if (mutationAt(gi) != null)
+                Text(
+                    '☄ ${mutationAt(gi)!.name} — ${mutationAt(gi)!.up} / ${mutationAt(gi)!.down}',
+                    style: const TextStyle(
+                        fontSize: 10, color: Color(0xFFB388FF))),
               if (nextLocked)
                 Text(
                     '🔒 ${next.name} — reach ▲${next.unlockHeight} here (${p.galaxyBest[g.id] ?? 0}/${next.unlockHeight})',
@@ -1214,6 +1258,38 @@ class RunHud extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                     color: Color(0xFFFF7E6B))),
           ),
+          // Active sigils — the run's build, always visible.
+          ValueListenableBuilder<int>(
+            valueListenable: game.sigilVersion,
+            builder: (_, __, ___) => game.sigils.isEmpty
+                ? const SizedBox.shrink()
+                : Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Wrap(
+                      spacing: 6,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        for (final s in game.sigils)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0x66231A3F),
+                              borderRadius: BorderRadius.circular(999),
+                              border:
+                                  Border.all(color: const Color(0x66B388FF)),
+                            ),
+                            child: Text(s.name,
+                                style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 1,
+                                    color: Color(0xFFB388FF))),
+                          ),
+                      ],
+                    ),
+                  ),
+          ),
         ]),
       ),
     );
@@ -1228,6 +1304,106 @@ class RunHud extends StatelessWidget {
         ),
         child: child,
       );
+}
+
+/* ---------------- SIGIL OFFER ---------------- */
+
+/// Balatro-style pick-1-of-3: same seed = same cards for every racer.
+/// The star keeps orbiting while you decide — choosing is always safe.
+class SigilOfferOverlay extends StatelessWidget {
+  const SigilOfferOverlay({super.key, required this.game});
+  final EchoOrbitGame game;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<SigilDef>?>(
+      valueListenable: game.sigilOffer,
+      builder: (_, offer, __) {
+        if (offer == null) return const SizedBox.shrink();
+        return Align(
+          alignment: Alignment.bottomCenter,
+          child: SafeArea(
+            child: Container(
+              margin: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xEE0B1026),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0x66B388FF)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('CHOOSE A SIGIL',
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 3,
+                          color: Color(0xFFB388FF))),
+                  const SizedBox(height: 2),
+                  const Text('Every gift has a price · same seed, same choices',
+                      style:
+                          TextStyle(fontSize: 10, color: Color(0xFF8E9BFF))),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      for (final s in offer)
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => game.pickSigil(s),
+                            child: Container(
+                              margin:
+                                  const EdgeInsets.symmetric(horizontal: 3),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: const Color(0x44231A3F),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                    color: const Color(0x88B388FF)),
+                              ),
+                              child: Column(
+                                children: [
+                                  Text(s.name,
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: 1,
+                                          color: Color(0xFFB388FF))),
+                                  const SizedBox(height: 6),
+                                  Text('▲ ${s.up}',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                          fontSize: 10,
+                                          color: Color(0xFF5DF2C8))),
+                                  const SizedBox(height: 4),
+                                  Text('▼ ${s.down}',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                          fontSize: 10,
+                                          color: Color(0xFFFF7E6B))),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  TextButton(
+                    onPressed: () => game.pickSigil(null),
+                    child: const Text('PASS — fly pure',
+                        style: TextStyle(
+                            fontSize: 11, color: Color(0xFF8E9BFF))),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
 /* ---------------- RESULTS ---------------- */

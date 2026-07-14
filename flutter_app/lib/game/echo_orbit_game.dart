@@ -118,25 +118,59 @@ const _gNameB = [
 
 final Map<int, GalaxyDef> _galaxyCache = {};
 
+/// LORE: every universe is 12 galaxies deep and ends at a LIGHT — the end of
+/// its story. Crossing a Light is the tryhard grail... and reveals the next
+/// universe. The ladder itself never ends.
+const universeLen = 12;
+
+const _lightOrdinals = [
+  'FIRST', 'SECOND', 'THIRD', 'FOURTH', 'FIFTH', 'SIXTH',
+  'SEVENTH', 'EIGHTH', 'NINTH', 'TENTH', 'ELEVENTH', 'TWELFTH',
+];
+
+/// 1-based universe number a galaxy index belongs to.
+int universeOf(int i) => i ~/ universeLen + 1;
+
+/// True for the last galaxy of a universe — the story's end gate.
+bool isLightGate(int i) => i % universeLen == universeLen - 1;
+
+String lightName(int u) => u <= _lightOrdinals.length
+    ? 'THE ${_lightOrdinals[u - 1]} LIGHT'
+    : 'THE LIGHT $u';
+
 /// Endless galaxy ladder: the first 4 are handcrafted, everything beyond is
 /// generated deterministically forever. Balance rule: rewards grow slightly
 /// faster than difficulty, so pushing deeper is always the optimal play —
 /// there is no end for speedrunners and tryharders.
+/// IMPORTANT: difficulty stays 1.6 + k*0.12 for ALL procedural galaxies
+/// (Light gates included) — the server mirrors this exact curve for scoring.
 GalaxyDef galaxyAt(int i) {
   if (i < 0) return galaxies[0];
   if (i < galaxies.length) return galaxies[i];
   return _galaxyCache.putIfAbsent(i, () {
     final k = i - (galaxies.length - 1); // sectors past VOID BLOOM
     final hue = (i * 47.0) % 360;
+    final gate = isLightGate(i);
     return GalaxyDef(
       id: 'gx$i',
-      name:
-          '${_gNameA[i * 7 % _gNameA.length]} ${_gNameB[i * 13 % _gNameB.length]}${i >= 16 ? ' $k' : ''}',
-      tagline: 'Uncharted space — sector $k',
-      bgTop: HSLColor.fromAHSL(1, hue, 0.55, 0.06).toColor(),
-      bgBottom: HSLColor.fromAHSL(1, (hue + 24) % 360, 0.50, 0.14).toColor(),
-      ring: HSLColor.fromAHSL(1, (hue + 180) % 360, 0.85, 0.72).toColor(),
-      accent: HSLColor.fromAHSL(1, (hue + 120) % 360, 0.90, 0.70).toColor(),
+      name: gate
+          ? lightName(universeOf(i))
+          : '${_gNameA[i * 7 % _gNameA.length]} ${_gNameB[i * 13 % _gNameB.length]}${i >= 16 ? ' $k' : ''}',
+      tagline: gate
+          ? 'The end of the story — or a door'
+          : 'Uncharted space — sector $k',
+      bgTop: gate
+          ? const Color(0xFF0B0A07)
+          : HSLColor.fromAHSL(1, hue, 0.55, 0.06).toColor(),
+      bgBottom: gate
+          ? const Color(0xFF2B2416)
+          : HSLColor.fromAHSL(1, (hue + 24) % 360, 0.50, 0.14).toColor(),
+      ring: gate
+          ? const Color(0xFFFFF3C4)
+          : HSLColor.fromAHSL(1, (hue + 180) % 360, 0.85, 0.72).toColor(),
+      accent: gate
+          ? const Color(0xFFFFFFFF)
+          : HSLColor.fromAHSL(1, (hue + 120) % 360, 0.90, 0.70).toColor(),
       difficulty: 1.6 + k * 0.12,
       reward: 2.6 * math.pow(1.30, k).toDouble(),
       unlockHeight: 60 + k * 12,
@@ -144,6 +178,89 @@ GalaxyDef galaxyAt(int i) {
     );
   });
 }
+
+/* ---------- galaxy mutations (deep-space rule twists) ---------- */
+
+/// Every procedural galaxy (5+) carries ONE seeded rule twist — a reason to
+/// scout ahead and pick your hunting ground. Pure function of the galaxy
+/// index: identical for every player = fair racing. Light gates stay pure
+/// (classic rules), and no rng draws are added or removed, so world
+/// generation stays deterministic per seed.
+class MutationDef {
+  const MutationDef(this.id, this.name, this.up, this.down,
+      {this.radiusMult = 1,
+      this.omegaMult = 1,
+      this.moverBoost = 1,
+      this.stormBoost = 1,
+      this.bumperBoost = 1,
+      this.moteMult = 1});
+  final String id, name, up, down;
+  final double radiusMult; // ring size
+  final double omegaMult; // orbit spin speed
+  final double moverBoost; // drifting-ring chance
+  final double stormBoost; // storm chance
+  final double bumperBoost; // pulsar bumper chance
+  final double moteMult; // mote dust value
+}
+
+const mutationDefs = [
+  MutationDef('drift', 'UNSTABLE ORBITS', 'motes x1.4', 'rings drift wildly',
+      moverBoost: 2.2, moteMult: 1.4),
+  MutationDef('storm', 'STORMLANDS', 'motes x1.25', 'storms strike often',
+      stormBoost: 1.6, moteMult: 1.25),
+  MutationDef('hyper', 'HYPERSPIN', 'rings 15% wider', 'spin x1.25',
+      omegaMult: 1.25, radiusMult: 1.15),
+  MutationDef('dwarf', 'DWARF STARS', 'motes x1.6', 'rings 15% smaller',
+      radiusMult: 0.85, moteMult: 1.6),
+  MutationDef('pulsar', 'PULSAR FIELD', 'bumpers everywhere', 'pinball chaos',
+      bumperBoost: 2.3),
+  MutationDef('calm', 'SLOW NEBULA', 'spin x0.85', 'motes x0.7',
+      omegaMult: 0.85, moteMult: 0.7),
+];
+
+/// The mutation of a galaxy — null for the 4 handcrafted ones & Light gates.
+MutationDef? mutationAt(int i) {
+  if (i < galaxies.length || isLightGate(i)) return null;
+  return mutationDefs[math.Random(i * 7919).nextInt(mutationDefs.length)];
+}
+
+/* ---------- pilot ranks (career ladder — the tryhard identity) ---------- */
+
+/// Rank points use the same math as the weekly Champions board
+/// (height x galaxy difficulty x 10), but over your CAREER bests —
+/// permanent, offline-computable, impossible to farm in easy galaxies.
+class RankDef {
+  const RankDef(this.name, this.points, this.color);
+  final String name;
+  final int points; // career points required
+  final Color color;
+}
+
+const rankDefs = [
+  RankDef('STARDUST', 0, Color(0xFF8E9BFF)),
+  RankDef('SPARK', 300, Color(0xFF5DF2C8)),
+  RankDef('COMET', 1000, Color(0xFF7DD8FF)),
+  RankDef('NOVA', 2600, Color(0xFFFFD166)),
+  RankDef('PULSAR', 6000, Color(0xFFFF9E6B)),
+  RankDef('QUASAR', 13000, Color(0xFFFF7E9B)),
+  RankDef('SINGULARITY', 28000, Color(0xFFB388FF)),
+  RankDef('FIRST LIGHT', 60000, Color(0xFFFFFFFF)),
+];
+
+/// Galaxy index from a SaveData.galaxyBest key ('lumen'... or 'gx17').
+int galaxyIndexOf(String id) {
+  for (var i = 0; i < galaxies.length; i++) {
+    if (galaxies[i].id == id) return i;
+  }
+  return id.startsWith('gx') ? (int.tryParse(id.substring(2)) ?? 0) : 0;
+}
+
+/// Display name for a rank index — endless above FIRST LIGHT (✕2, ✕3...).
+String rankName(int idx) => idx < rankDefs.length
+    ? rankDefs[idx].name
+    : '${rankDefs.last.name} ✕${idx - rankDefs.length + 2}';
+
+Color rankColor(int idx) => rankDefs[math.min(idx, rankDefs.length - 1)].color;
 
 /// Permanent upgrade definitions (docs/02 economy).
 ///
@@ -204,6 +321,64 @@ const skinDefs = [
       premium: true),
 ];
 
+/// SIGILS — run-defining pacts offered at height milestones (pick 1 of 3).
+/// Every sigil gives AND takes; stacking them turns a run into a build.
+/// Offers are seeded from the world seed: same universe = same choices
+/// for every racer. Fairness first, Balatro-style variety second.
+class SigilDef {
+  const SigilDef(this.id, this.name, this.up, this.down,
+      {this.dustMult = 1,
+      this.captureMult = 1,
+      this.perfectMult = 1,
+      this.speedMult = 1,
+      this.spinMult = 1,
+      this.magnetMult = 1,
+      this.echoMult = 1,
+      this.comboMult = 1,
+      this.skipBonus = 0,
+      this.savesDelta = 0,
+      this.noSaves = false});
+  final String id;
+  final String name;
+  final String up; // what it gives
+  final String down; // what it costs
+  final double dustMult;
+  final double captureMult; // capture window scale
+  final double perfectMult; // perfect-arc window scale
+  final double speedMult; // launch speed scale
+  final double spinMult; // orbit spin scale
+  final double magnetMult;
+  final double echoMult; // echo income scale
+  final double comboMult; // scales the +10%-per-combo step
+  final int skipBonus; // extra combo on ring skips
+  final int savesDelta; // instant rescue change when picked
+  final bool noSaves; // GLASS STAR: no rescues at all
+}
+
+const sigilDefs = [
+  SigilDef('glass', 'GLASS STAR', 'All dust x2',
+      'No rescues — one mistake ends the run',
+      dustMult: 2, noSaves: true),
+  SigilDef('gravity', 'GRAVITY KISS', 'Capture window +30%',
+      'Combo builds half as fast',
+      captureMult: 1.3, comboMult: 0.5),
+  SigilDef('comet', 'COMET HEART', 'Launch +25% faster · dust +50%',
+      'Capture window -15%',
+      speedMult: 1.25, dustMult: 1.5, captureMult: 0.85),
+  SigilDef('still', 'STILL SKY', 'Rings spin 25% slower', 'Dust -30%',
+      spinMult: 0.75, dustMult: 0.7),
+  SigilDef('bloom', 'ECHO BLOOM', 'Echo income x2', 'Your own dust -25%',
+      echoMult: 2, dustMult: 0.75),
+  SigilDef('phoenix', 'PHOENIX FEATHER', '+1 rescue right now',
+      'Perfect window -30%',
+      savesDelta: 1, perfectMult: 0.7),
+  SigilDef('wild', 'WILD ARC', 'Ring skips give +4 combo',
+      'Launch +15% faster — hold on',
+      skipBonus: 2, speedMult: 1.15),
+  SigilDef('tide', 'GOLD TIDE', 'Magnet radius x2', 'Rings spin +15% faster',
+      magnetMult: 2, spinMult: 1.15),
+];
+
 /// Daily challenge definitions.
 class DailyDef {
   const DailyDef(this.label, this.target);
@@ -256,6 +431,15 @@ class Mote {
   final int value;
   bool collected = false;
   double pull = 0;
+}
+
+/// Pulsar bumper (galaxy 5+): a pinball pin floating between rings.
+/// Clip it mid-flight to bank off with a speed kick, dust and +combo.
+class Bumper {
+  Bumper(this.pos, this.r);
+  final Vector2 pos;
+  final double r;
+  double hitT = 0; // >0 = just hit: flash + short re-hit cooldown
 }
 
 class _Particle {
@@ -371,6 +555,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
   math.Random _rng = math.Random(0);
   final List<Ring> _rings = [];
   final List<Mote> _motes = [];
+  final List<Bumper> _bumpers = [];
   final List<_Particle> _particles = [];
   final List<_FloatText> _floats = [];
   final List<Vector2> _trail = [];
@@ -473,6 +658,92 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
       if (s.id == profile.skin) return s.color;
     }
     return tierColor();
+  }
+
+  /* ---------- sigils (run builds) ---------- */
+  final List<SigilDef> sigils = []; // active pacts, this run only
+  final ValueNotifier<List<SigilDef>?> sigilOffer = ValueNotifier(null);
+  final ValueNotifier<int> sigilVersion = ValueNotifier(0); // HUD refresh
+  int _sigilCount = 0;
+  int _nextSigilAt = 10; // heights 10, 24, 40, then every +25
+
+  bool hasSigil(String id) => sigils.any((s) => s.id == id);
+
+  /// Product of one multiplier across every active sigil.
+  double _sig(double Function(SigilDef s) f) =>
+      sigils.fold(1.0, (m, s) => m * f(s));
+
+  void _offerSigils() {
+    final pool = sigilDefs.where((s) => !hasSigil(s.id)).toList();
+    if (pool.length < 3) return;
+    // Seeded by universe + offer number: same seed = same three cards
+    // for every racer — builds differ by CHOICE, never by luck.
+    pool.shuffle(math.Random(worldSeed ^ ((_sigilCount + 1) * 40503)));
+    sigilOffer.value = pool.take(3).toList();
+  }
+
+  /// Tap a card (or pass). The star keeps orbiting while you decide —
+  /// choosing is always safe, launching waits for you.
+  void pickSigil(SigilDef? s) {
+    if (sigilOffer.value == null) return;
+    if (s != null) {
+      sigils.add(s);
+      _saves = math.max(0, _saves + s.savesDelta);
+      if (s.noSaves) _saves = 0;
+      _floats.add(_FloatText(_pos.x, _pos.y - 30, s.name, Palette.violet, 15));
+      _burst(Palette.violet, 12);
+    }
+    sigilOffer.value = null;
+    _sigilCount++;
+    _nextSigilAt = _sigilCount < 3
+        ? const [10, 24, 40][_sigilCount]
+        : 40 + (_sigilCount - 2) * 25;
+    sigilVersion.value++;
+  }
+
+  void _resetSigils() {
+    sigils.clear();
+    sigilOffer.value = null;
+    _sigilCount = 0;
+    _nextSigilAt = 10;
+    sigilVersion.value++;
+  }
+
+  /* ---------- galaxy mutation (current) ---------- */
+  MutationDef? get mutation => mutationAt(profile.galaxy);
+
+  /// Current mutation multiplier (1 when flying classic space).
+  double _mut(double Function(MutationDef m) f) {
+    final m = mutation;
+    return m == null ? 1 : f(m);
+  }
+
+  /* ---------- career rank ---------- */
+  /// Champions math over career bests: height x difficulty x 10 per galaxy.
+  int careerPoints() {
+    var pts = 0;
+    profile.galaxyBest.forEach((id, best) {
+      pts += (best * galaxyAt(galaxyIndexOf(id)).difficulty * 10).round();
+    });
+    return pts;
+  }
+
+  int get rankIndex {
+    final p = careerPoints();
+    var idx = 0;
+    for (var i = 1; i < rankDefs.length; i++) {
+      if (p >= rankDefs[i].points) idx = i;
+    }
+    // Endless tail: every 30k career points past FIRST LIGHT is another ✕.
+    if (p >= rankDefs.last.points) idx += (p - rankDefs.last.points) ~/ 30000;
+    return idx;
+  }
+
+  /// Career points needed for the next rank (endless past FIRST LIGHT).
+  int nextRankAt() {
+    final i = rankIndex;
+    if (i + 1 < rankDefs.length) return rankDefs[i + 1].points;
+    return rankDefs.last.points + (i - rankDefs.length + 2) * 30000;
   }
 
   /* ---------- prestige ---------- */
@@ -625,6 +896,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     _lastStormI = -99;
     _rings.clear();
     _motes.clear();
+    _bumpers.clear();
     _particles.clear();
     _floats.clear();
     _trail.clear();
@@ -657,14 +929,17 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
         math.min(16.0, (gd - 1) * 14);
     final speedUp =
         (1 + 0.55 * (i / (i + 40)) + i * 0.0012) * (1 + (gd - 1) * 0.65);
-    final stormChance =
-        ((0.16 + 0.24 * (i / (i + 80)) + math.min(0.15, i * 0.0002)) * gd)
-            .clamp(0.0, 0.6);
+    final stormChance = ((0.16 + 0.24 * (i / (i + 80)) + math.min(0.15, i * 0.0002)) *
+            gd *
+            _mut((m) => m.stormBoost))
+        .clamp(0.0, 0.6);
     // Layer 2 — the seed only shuffles within those fair bounds.
     final radius = first
         ? 70.0
         : math.max(
-            24.0, baseRadius + _rng.nextDouble() * 10 + (breather ? 8 : 0));
+            20.0,
+            (baseRadius + _rng.nextDouble() * 10 + (breather ? 8 : 0)) *
+                _mut((m) => m.radiusMult));
     final prevX = first ? size.x * 0.5 : _rings[i - 1].center.x;
     final x = first
         ? size.x * 0.5
@@ -681,13 +956,15 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
         !storm &&
         i > 7 &&
         _rings[i - 1].moveAmp == 0 &&
-        _rng.nextDouble() < math.min(0.5, 0.30 + i * 0.0005);
+        _rng.nextDouble() <
+            math.min(0.9, math.min(0.5, 0.30 + i * 0.0005) * _mut((m) => m.moverBoost));
     final ring = Ring(
       index: i,
       center: Vector2(x, -i * spacing),
       radius: radius,
       omega: (1.35 + _rng.nextDouble() * 0.5) *
           speedUp *
+          _mut((m) => m.omegaMult) *
           (breather ? 0.85 : 1) *
           (_rng.nextBool() ? 1 : -1),
       moveAmp: mover ? 26 + _rng.nextDouble() * 34 : 0,
@@ -717,6 +994,26 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
         _motes.add(Mote(p, storm ? 3 : (_rng.nextDouble() < 0.25 ? 2 : 1)));
       }
     }
+    // Pulsar bumpers — pinball pins between rings, deep space only (galaxy
+    // 5+). All rng draws are guarded so the four handcrafted galaxies keep
+    // byte-identical layouts for every existing seed.
+    if (!first && profile.galaxy >= 4 && !storm && i > 3) {
+      if (_rng.nextDouble() < math.min(0.8, 0.35 * _mut((m) => m.bumperBoost))) {
+        final pr = _rings[_rings.length - 2];
+        final t = 0.4 + _rng.nextDouble() * 0.2;
+        final bx = (lerpDouble(pr.center.x, ring.center.x, t)! +
+                (_rng.nextDouble() * 320 - 160))
+            .clamp(30.0, size.x - 30.0);
+        final by = lerpDouble(pr.center.y, ring.center.y, t)!;
+        final p = Vector2(bx, by);
+        final br = 13 + _rng.nextDouble() * 6;
+        // Never overlap the rings it sits between — bounces stay fair.
+        if (p.distanceTo(ring.center) > ring.radius + 34 &&
+            p.distanceTo(pr.center) > pr.radius + 34) {
+          _bumpers.add(Bumper(p, br));
+        }
+      }
+    }
   }
 
   void _syncOrbitPos() {
@@ -736,6 +1033,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
       storage.save();
     }
     runSeed = seed ?? dailySeed;
+    _resetSigils();
     _resetWorld();
     _camY = -size.y * 0.62;
     height.value = 0;
@@ -768,9 +1066,13 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     music.setTheme(ws, galaxy.difficulty);
     music.setHeight(0);
     music.start();
+    // Deep space carries a rule twist — announce it so nobody flies blind.
+    final mu = mutation;
+    if (mu != null) _showToast('MUTATION — ${mu.name}: ${mu.down}');
   }
 
   void goHome() {
+    _resetSigils();
     _resetWorld();
     _ghosts = [];
     _rivals = [];
@@ -794,10 +1096,11 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
   @override
   void onTapDown(TapDownEvent event) {
     if (state.value == RunState.running && !_flying) {
+      if (sigilOffer.value != null) return; // choosing a sigil — orbit is safe
       final r = _rings[_ringIndex];
       final dir = r.omega.sign == 0 ? 1.0 : r.omega.sign;
       _vel.setValues(-math.sin(_angle) * dir, math.cos(_angle) * dir);
-      _vel.scale(flightSpeed);
+      _vel.scale(flightSpeed * _sig((s) => s.speedMult));
       _flying = true;
       _flightDist = 0;
       r.flash = 1.0; // departed ring blinks goodbye
@@ -815,6 +1118,9 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
       r.update(_time);
       if (r.flash > 0) r.flash = math.max(0, r.flash - dt * 1.8);
     }
+    for (final b in _bumpers) {
+      if (b.hitT > 0) b.hitT = math.max(0, b.hitT - dt * 1.5);
+    }
 
     // Home screen: keep the server status dot honest (ping every 10 s).
     if (state.value == RunState.home) {
@@ -828,11 +1134,12 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     if (_flying) {
       _pos.add(_vel * dt);
       _flightDist += _vel.length * dt;
+      _checkBumpers();
       _checkCapture();
       if (_flying && _isMiss()) _fall();
     } else {
       final r = _rings[_ringIndex];
-      _angle += r.omega * dt;
+      _angle += r.omega * dt * _sig((s) => s.spinMult);
       _syncOrbitPos();
     }
 
@@ -924,7 +1231,7 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
       // Income only while the run is live (spectating after death is visual).
       if (state.value != RunState.running) continue;
       final perSec = (g.dustVal * echoYield) / (g.path.length / 2 * 0.1);
-      _echoFrac += perSec * dt * profile.globalMult;
+      _echoFrac += perSec * dt * profile.globalMult * _sig((s) => s.echoMult);
       if (_echoFrac >= 25) {
         _echoFrac -= 25;
         echoDust.value += 25;
@@ -953,13 +1260,43 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     for (var k = _ringIndex + 1; k < maxK; k++) {
       final r = _rings[k];
       final d = _pos.distanceTo(r.center);
-      if (d < r.radius * precisionMult) {
+      if (d < r.radius * precisionMult * _sig((s) => s.captureMult)) {
         // Perfect Arc = velocity line passes near the ring core
         // (impact parameter, docs/01 "through the center").
         final rel = r.center - _pos;
         final b = (_vel.x * rel.y - _vel.y * rel.x).abs() / _vel.length;
-        _capture(r, perfect: b < r.radius * 0.34);
+        _capture(r, perfect: b < r.radius * 0.34 * _sig((s) => s.perfectMult));
         return;
+      }
+    }
+  }
+
+  /// Pulsar bumpers: pinball physics. A bounce starts a fresh flight leg
+  /// (_flightDist = 0) so bank shots never trigger the drift-away miss.
+  void _checkBumpers() {
+    for (final b in _bumpers) {
+      if (b.hitT > 0) continue; // cooldown — no machine-gun rebounds
+      if (_pos.distanceTo(b.pos) < b.r + 9) {
+        final n = (_pos - b.pos)..normalize();
+        final dot = _vel.dot(n);
+        if (dot < 0) _vel.sub(n * (2 * dot)); // reflect v' = v - 2(v·n)n
+        _vel.scale(1.1); // pinball kick
+        const maxV = flightSpeed * 1.7;
+        if (_vel.length > maxV) _vel.scale(maxV / _vel.length);
+        _pos.setFrom(b.pos + n * (b.r + 10)); // unstick from the pin
+        _flightDist = 0;
+        b.hitT = 0.6;
+        combo.value++;
+        final gain = (4 *
+                profile.globalMult *
+                galaxy.reward *
+                _sig((s) => s.dustMult))
+            .round();
+        runDust.value += gain;
+        _floats.add(
+            _FloatText(_pos.x, _pos.y - 20, 'BOUNCE! +$gain', Palette.violet, 13));
+        _burst(Palette.violet, 10);
+        return; // one bounce per frame
       }
     }
   }
@@ -977,20 +1314,25 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     _lastRing = r.index;
     _angle = math.atan2(_pos.y - r.center.y, _pos.x - r.center.x);
     if (r.index > height.value) height.value = r.index;
+    // Sigil milestone: offer a pick-1-of-3 pact while safely orbiting.
+    if (height.value >= _nextSigilAt && sigilOffer.value == null) {
+      _offerSigils();
+    }
     if (perfect) {
       perfects++;
       combo.value++;
       _floats.add(_FloatText(_pos.x, _pos.y - 30, 'PERFECT x2', Palette.coral, 17));
     } else if (skipped) {
-      combo.value += 2;
+      combo.value += 2 + sigils.fold(0, (a, s) => a + s.skipBonus);
       _floats.add(_FloatText(_pos.x, _pos.y - 48, 'SKIP! +combo', Palette.mint, 14));
     }
     final gain = (5 *
-            (1 + 0.1 * combo.value) *
+            (1 + 0.1 * _sig((s) => s.comboMult) * combo.value) *
             (perfect ? 2 : 1) *
             (skipped ? 2 : 1) *
             profile.globalMult *
-            galaxy.reward)
+            galaxy.reward *
+            _sig((s) => s.dustMult))
         .round();
     runDust.value += gain;
     _floats.add(_FloatText(_pos.x, _pos.y - 12, '+$gain', Palette.gold, 13));
@@ -1045,8 +1387,21 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     if (height.value > (profile.galaxyBest[galaxy.id] ?? 0)) {
       profile.galaxyBest[galaxy.id] = height.value;
       if (nextWasLocked && galaxyUnlocked(gi + 1)) {
-        _showToast('NEW GALAXY UNLOCKED: ${galaxyAt(gi + 1).name}');
+        final ni = gi + 1;
+        // Lore beats: unlocking a Light gate = the end is in sight;
+        // unlocking PAST a Light = you crossed into the next universe.
+        _showToast(ni % universeLen == 0
+            ? 'BEYOND ${galaxy.name} — UNIVERSE ${universeOf(ni)} AWAITS'
+            : isLightGate(ni)
+                ? '${galaxyAt(ni).name} UNLOCKED — the end of the story?'
+                : 'NEW GALAXY UNLOCKED: ${galaxyAt(ni).name}');
       }
+    }
+    // Career rank — the permanent tryhard ladder (rank-up = a real moment).
+    final newRank = rankIndex;
+    if (newRank > profile.rankSeen) {
+      profile.rankSeen = newRank;
+      _showToast('RANK UP — ${rankName(newRank)}');
     }
     // Roguelite history: any past universe can be replayed by its seed.
     profile.history.insert(
@@ -1076,8 +1431,9 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     storage.save();
     profileVersion.value++;
     // Fire-and-forget backend sync (offline-first: failures are silent).
-    api.submitScore(
-        height.value, perfects, profile.prestige, profile.galaxy, galaxy.name);
+    api.submitScore(height.value, perfects, profile.prestige, profile.galaxy,
+        galaxy.name,
+        rank: rankIndex);
     api.pushSave(profile);
     // Ghost racing: publish this run so others on the same universe race it.
     if (height.value >= 3 && _rec.length > 20) {
@@ -1089,13 +1445,18 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     for (final m in _motes) {
       if (m.collected) continue;
       final d = m.pos.distanceTo(_pos);
-      if (d < magnetR) {
+      if (d < magnetR * _sig((s) => s.magnetMult)) {
         m.pull = math.min(1, m.pull + dt * 4);
         m.pos.add((_pos - m.pos)..scale(m.pull * dt * 9));
       }
       if (d < 20) {
         m.collected = true;
-        final g = (m.value * profile.globalMult * galaxy.reward).round();
+        final g = (m.value *
+                profile.globalMult *
+                galaxy.reward *
+                _sig((s) => s.dustMult) *
+                _mut((mu) => mu.moteMult))
+            .round();
         runDust.value += g;
         _floats.add(_FloatText(m.pos.x, m.pos.y, '+$g', Palette.gold, 11));
       }
@@ -1208,6 +1569,27 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
       if (m.pos.y < _camY - 40 || m.pos.y > _camY + size.y + 40) continue;
       canvas.drawCircle(m.pos.toOffset(), m.value >= 3 ? 5 : (m.value == 2 ? 4 : 3),
           m.value >= 3 ? stormPaint : motePaint);
+    }
+
+    // pulsar bumpers — violet pins; freshly-hit ones flare
+    for (final b in _bumpers) {
+      if (b.pos.y < _camY - 60 || b.pos.y > _camY + size.y + 60) continue;
+      final bp = 0.6 + 0.4 * math.sin(_time * 6 + b.pos.x);
+      canvas.drawCircle(
+          b.pos.toOffset(),
+          b.r + 6,
+          Paint()
+            ..color = Palette.violet.withValues(alpha: 0.10 + 0.30 * b.hitT));
+      canvas.drawCircle(
+          b.pos.toOffset(),
+          b.r,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2 + b.hitT * 3
+            ..color = Palette.violet
+                .withValues(alpha: math.min(1, 0.45 + 0.35 * bp + 0.3 * b.hitT)));
+      canvas.drawCircle(b.pos.toOffset(), 4,
+          Paint()..color = const Color(0xFFFFFFFF).withValues(alpha: 0.9));
     }
 
     // rings (galaxy-themed)

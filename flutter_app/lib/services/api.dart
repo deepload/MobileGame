@@ -184,7 +184,8 @@ class Api {
   }
 
   Future<void> submitScore(int height, int perfects, int prestige, int galaxy,
-      String galaxyName) async {
+      String galaxyName,
+      {int rank = 0}) async {
     if (_uid == null) return;
     try {
       await http
@@ -196,6 +197,7 @@ class Api {
                 'prestige': prestige,
                 'galaxy': galaxy,
                 'gname': galaxyName,
+                'rank': rank,
               }))
           .timeout(_timeout);
     } catch (_) {}
@@ -215,7 +217,8 @@ class Api {
             .map((e) => LeaderboardEntry(
                 e['name'] as String? ?? 'star',
                 e['height'] as int? ?? 0,
-                e['prestige'] as int? ?? 0))
+                e['prestige'] as int? ?? 0,
+                (e['rank'] as num?)?.toInt() ?? 0))
             .toList();
       }
     } catch (_) {}
@@ -240,7 +243,8 @@ class Api {
                 e['gname'] as String? ?? '',
                 (e['galaxies'] as num?)?.toInt() ?? 0,
                 (e['perfects'] as num?)?.toInt() ?? 0,
-                (e['prestige'] as num?)?.toInt() ?? 0))
+                (e['prestige'] as num?)?.toInt() ?? 0,
+                (e['rank'] as num?)?.toInt() ?? 0))
             .toList();
       }
     } catch (_) {}
@@ -307,16 +311,19 @@ class Api {
 }
 
 class LeaderboardEntry {
-  const LeaderboardEntry(this.name, this.height, this.prestige);
+  const LeaderboardEntry(this.name, this.height, this.prestige,
+      [this.rank = 0]);
   final String name;
   final int height;
   final int prestige;
+  final int rank; // career rank index (client maps it to a name/color)
 }
 
 /// One row of the weekly CHAMPIONS board (difficulty-weighted, all galaxies).
 class ChampionEntry {
   const ChampionEntry(this.name, this.score, this.height, this.galaxy,
-      this.galaxyName, this.galaxies, this.perfects, this.prestige);
+      this.galaxyName, this.galaxies, this.perfects, this.prestige,
+      [this.rank = 0]);
   final String name;
   final int score; // sum of round(height x difficulty x 10) + 5/perfect
   final int height; // best height anywhere
@@ -325,6 +332,7 @@ class ChampionEntry {
   final int galaxies; // number of galaxies flown this week
   final int perfects;
   final int prestige;
+  final int rank; // career rank index (client maps it to a name/color)
 }
 
 /// Outcome of the alpha login form (api.enter).
