@@ -810,9 +810,14 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
     _pinging = true;
     final was = api.online;
     final wasConn = api.connected;
+    final wasGate = api.updateRequired || api.updateAvailable;
     await api.ping();
     _pinging = false;
-    if (api.online != was || api.connected != wasConn) profileVersion.value++;
+    if (api.online != was ||
+        api.connected != wasConn ||
+        (api.updateRequired || api.updateAvailable) != wasGate) {
+      profileVersion.value++;
+    }
   }
 
   /// Full wipe — a brand-new game (unlike Supernova, nothing survives).
@@ -1024,6 +1029,12 @@ class EchoOrbitGame extends FlameGame with TapCallbacks {
   }
 
   void startRun({int? seed, int? galaxyIndex}) {
+    // Force update: the server refuses this build — every path into a run
+    // (PLAY button, sky tap, seed replays) funnels through here.
+    if (api.updateRequired) {
+      _showToast('UPDATE REQUIRED — download the new version to fly');
+      return;
+    }
     checkDailyReset();
     if (galaxyIndex != null &&
         galaxyIndex >= 0 &&

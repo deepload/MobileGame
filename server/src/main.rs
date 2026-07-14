@@ -188,10 +188,37 @@ fn champion_points(e: &LbEntry) -> u64 {
     (e.height as f64 * galaxy_difficulty(e.galaxy) * 10.0).round() as u64 + e.perfects as u64 * 5
 }
 
+/// Client version gate (force update). A client below `minBuild` locks its
+/// home screen into the update gate; below `latestBuild` it shows a soft
+/// hint. Env-overridable so shipping a BREAKING change only needs
+/// `MIN_BUILD=<n>` in the compose file + restart — no rebuild, no redeploy:
+///   MIN_BUILD     lowest client build still allowed online (default 0 = all)
+///   LATEST_BUILD  newest published build (default 2)
+///   APK_URL       where the newest APK is downloaded from
+fn version_info() -> Value {
+    let env_u32 = |k: &str, d: u32| {
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d)
+    };
+    json!({
+        "minBuild": env_u32("MIN_BUILD", 0),
+        "latestBuild": env_u32("LATEST_BUILD", 2),
+        "apkUrl": std::env::var("APK_URL")
+            .unwrap_or_else(|_| "http://217.216.32.99/echo-orbit.apk".into()),
+    })
+}
+
 /* ---------------- handlers ---------------- */
 
 async fn health() -> impl IntoResponse {
-    Json(json!({ "ok": true, "service": "echo-orbit", "week": week_key() }))
+    Json(json!({
+        "ok": true,
+        "service": "echo-orbit",
+        "week": week_key(),
+        "version": version_info(),
+    }))
 }
 
 /// Remote config: live-tunable values + the daily seed (docs/06 A/B levers).
@@ -199,6 +226,7 @@ async fn config() -> impl IntoResponse {
     let day = now() / (24 * 3600);
     Json(json!({
         "dailySeed": day * 2654435761u64 % 4294967291u64,
+        "version": version_info(),
         "tuning": {
             "flightSpeed": 560,
             "ringSpacing": 175,

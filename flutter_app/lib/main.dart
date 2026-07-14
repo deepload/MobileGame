@@ -1,5 +1,6 @@
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'game/echo_orbit_game.dart';
 import 'services/api.dart';
@@ -188,6 +189,55 @@ class StatRow extends StatelessWidget {
   }
 }
 
+/* ---------------- FORCE UPDATE GATE ---------------- */
+
+/// Shown instead of the home panel when the server says this build is too
+/// old to play online (breaking change). No bypass — that's the point.
+/// It can only appear while a server answers; with no connection the game
+/// stays fully playable offline.
+class UpdateGate extends StatelessWidget {
+  const UpdateGate({super.key, required this.game});
+  final EchoOrbitGame game;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = game.api.updateUrl;
+    return Panel(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('🛰️', style: TextStyle(fontSize: 40)),
+          const SizedBox(height: 6),
+          const Text('UPDATE REQUIRED',
+              style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 2,
+                  color: Color(0xFFFFD166))),
+          const SizedBox(height: 8),
+          const Text(
+            'The universe has changed in ways this build (v${Api.appBuild}) '
+            'cannot fly. Download the new APK, install it over this one — '
+            'your progress is kept — and come back stronger.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFFC7D2FF), fontSize: 13),
+          ),
+          if (url.isNotEmpty)
+            BigButton('DOWNLOAD UPDATE',
+                onTap: () => launchUrl(Uri.parse(url),
+                    mode: LaunchMode.externalApplication))
+          else
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Text('Ask your pilot friend for the new APK.',
+                  style: TextStyle(color: Color(0xFF8E9BFF), fontSize: 12)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /* ---------------- HOME ---------------- */
 
 class HomeOverlay extends StatelessWidget {
@@ -199,6 +249,9 @@ class HomeOverlay extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: game.profileVersion,
       builder: (context, _, __) {
+        // Force update: the server refuses this build (breaking change).
+        // Only ever shown while a server answers — offline play stays free.
+        if (game.api.updateRequired) return UpdateGate(game: game);
         final p = game.profile;
         return Panel(
           child: SingleChildScrollView(
@@ -266,6 +319,21 @@ class HomeOverlay extends StatelessWidget {
                   ),
                 ),
               ),
+              // Soft update hint: a newer APK exists but this one still flies.
+              if (game.api.updateAvailable && !game.api.updateRequired)
+                InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => launchUrl(Uri.parse(game.api.updateUrl),
+                      mode: LaunchMode.externalApplication),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                    child: Text('● Update available — tap to download',
+                        style: TextStyle(
+                            color: Color(0xFFFFD166),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 11)),
+                  ),
+                ),
               const SizedBox(height: 4),
               // Career rank — the tryhard ladder (Champions math, lifetime).
               StatRow('Pilot rank',

@@ -34,6 +34,32 @@ class Api {
   /// Last health-check result — drives the home-screen status dot.
   bool online = false;
 
+  /// This build's number — MUST match the `+N` in pubspec.yaml's version.
+  /// The server advertises minBuild/latestBuild (force-update gate): below
+  /// minBuild the home screen locks until the new APK is installed. Offline
+  /// play is NEVER blocked — the gate only exists while a server answers.
+  static const appBuild = 2;
+  int minBuild = 0; // below this, online play is refused (breaking change)
+  int latestBuild = 0; // newest published build (soft "update available")
+  String updateUrl = ''; // where the newest APK lives
+
+  bool get updateRequired => online && minBuild > appBuild;
+  bool get updateAvailable => online && latestBuild > appBuild;
+
+  /// Adopt the version gate from a server reply; absent fields clear the
+  /// gate (old/private servers without one must never lock the client).
+  void _readVersion(Map<String, dynamic> j) {
+    final v = j['version'];
+    if (v is Map<String, dynamic>) {
+      minBuild = (v['minBuild'] as num?)?.toInt() ?? 0;
+      latestBuild = (v['latestBuild'] as num?)?.toInt() ?? 0;
+      updateUrl = v['apkUrl'] as String? ?? '';
+    } else {
+      minBuild = 0;
+      latestBuild = 0;
+    }
+  }
+
   /// Probe /health; also self-heals auth when the server comes back
   /// (e.g. the app launched offline and the network returned later).
   Future<bool> ping() async {
@@ -41,6 +67,11 @@ class Api {
       final res =
           await http.get(Uri.parse('$baseUrl/health')).timeout(_timeout);
       online = res.statusCode == 200;
+      if (online) {
+        try {
+          _readVersion(jsonDecode(res.body) as Map<String, dynamic>);
+        } catch (_) {}
+      }
     } catch (_) {
       online = false;
     }
@@ -166,6 +197,9 @@ class Api {
     baseUrl = url.isEmpty ? defaultUrl : url;
     _uid = null;
     _token = null;
+    minBuild = 0; // the new server's gate applies, not the old one's
+    latestBuild = 0;
+    updateUrl = '';
     await init();
   }
 
@@ -177,6 +211,7 @@ class Api {
           .timeout(_timeout);
       if (res.statusCode == 200) {
         final j = jsonDecode(res.body) as Map<String, dynamic>;
+        _readVersion(j);
         return (j['dailySeed'] as num?)?.toInt();
       }
     } catch (_) {}

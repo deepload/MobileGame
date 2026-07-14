@@ -1,7 +1,9 @@
 name: echo_orbit
 description: "ECHO ORBIT - one-touch skill climber where your past runs fly with you."
 publish_to: "none"
-version: 0.1.0+1
+# The +N build number MUST match Api.appBuild (services/api.dart) — the
+# server's force-update gate compares against it.
+version: 0.2.0+2
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -14,6 +16,7 @@ dependencies:
   http: ^1.2.1
   web_socket_channel: ^3.0.1
   flutter_soloud: ^3.5.4
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:

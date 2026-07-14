@@ -7,6 +7,14 @@ services:
     container_name: echo-orbit-backend
     volumes:
       - ./server/data:/app/data # leaderboards & saves survive restarts
+    environment:
+      # Force-update gate. On a BREAKING release: bump LATEST_BUILD, set
+      # MIN_BUILD to the same number, `docker compose up -d backend` — every
+      # older APK locks into the in-game update screen. For a non-breaking
+      # release bump only LATEST_BUILD (players get a soft hint instead).
+      MIN_BUILD: "0"
+      LATEST_BUILD: "2"
+      APK_URL: "http://217.216.32.99/echo-orbit.apk"
     restart: unless-stopped
 
   web:
